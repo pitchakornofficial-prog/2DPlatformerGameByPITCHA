@@ -2,10 +2,19 @@
     "map_width": 40,
     "map_height": 10,
     "layers": {
-        "0": {},
+        "0": {
+            "15,6": "Garden Decorations_3_2",
+            "15,7": "Garden Decorations_3_3"
+        },
         "1": {
             "30,7": "Garden Decorations_2_3",
-            "30,6": "Garden Decorations_2_2"
+            "30,6": "Garden Decorations_2_2",
+            "19,7": "Garden Decorations_5_3",
+            "20,7": "Garden Decorations_6_3",
+            "19,6": "Garden Decorations_5_2",
+            "20,6": "Garden Decorations_6_2",
+            "19,5": "Garden Decorations_5_1",
+            "20,5": "Garden Decorations_6_1"
         },
         "2": {
             "30,7": "Tree1_6_0",
@@ -384,20 +393,22 @@
     },
     "bg_layers": {
         "0": {
-            "image": null,
+            "image": "GandalfHardcore Background layers_layer 5",
             "offset_x": 0,
             "offset_y": 0,
-            "tile_w": 64,
-            "tile_h": 64,
-            "rot": 0
+            "tile_w": 256,
+            "tile_h": 256,
+            "rot": 0,
+            "parallax": 0.2
         },
         "1": {
-            "image": null,
+            "image": "GandalfHardcore Background layers_layer 2",
             "offset_x": 0,
             "offset_y": 0,
-            "tile_w": 100,
-            "tile_h": 100,
-            "rot": 0
+            "tile_w": 255,
+            "tile_h": 255,
+            "rot": 0,
+            "parallax": 0.5
         },
         "2": {
             "image": null,
@@ -405,7 +416,8 @@
             "offset_y": 0,
             "tile_w": 64,
             "tile_h": 64,
-            "rot": 0
+            "rot": 0,
+            "parallax": 1.0
         }
     },
     "entities": {
@@ -417,7 +429,12 @@
             36,
             7
         ],
-        "enemies": {},
+        "enemies": {
+            "30,7": {
+                "hp": 100,
+                "attack": 10
+            }
+        },
         "chests": {
             "31,7": {
                 "type": "Gold Chest",

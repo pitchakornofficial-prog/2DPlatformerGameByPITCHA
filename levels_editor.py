@@ -52,9 +52,12 @@ class AssetManager:
         self.tiles = {}
         self.chests = {}
         self.items = {}
+        self.wizard_frames = []
         self.load_assets("assets/tiles", self.tiles, is_spritesheet=True)
+        self.load_assets("assets/backgrond", self.tiles, is_spritesheet=False) 
         self.load_assets("assets/box", self.chests, is_spritesheet=False, is_chest=True)
         self._load_items()
+        self._load_wizard()
 
         if not self.tiles:
             surf = pygame.Surface((TILE_SIZE, TILE_SIZE))
@@ -107,73 +110,96 @@ class AssetManager:
                 surf.blit(ts, ts.get_rect(center=(32,32)))
                 self.items[name] = surf
 
+    def _load_wizard(self):
+        w_path = "assets/enamy/GandalfHardcore Portal sheet.png"
+        if os.path.exists(w_path):
+            try:
+                sheet = pygame.image.load(w_path).convert_alpha()
+                for i in range(10):
+                    frame = sheet.subsurface((i * 64, 0, 64, 64)).copy()
+                    self.wizard_frames.append(frame)
+            except Exception as e:
+                print(f"Failed to load wizard: {e}")
+
     def load_assets(self, path, dictionary, is_spritesheet=False, is_chest=False):
         if not os.path.exists(path):
             os.makedirs(path, exist_ok=True)
             return
-        for file in os.listdir(path):
-            if file.endswith((".png", ".jpg")):
-                try:
-                    img = pygame.image.load(os.path.join(path, file)).convert_alpha()
-                    name = os.path.splitext(file)[0]
-                    if is_chest and name == "TX Chest Animation":
-                        # Coordinates: user notation colNxrowM (1-indexed), actual pixel = (col-1)*32, (row-1)*32
-                        # Icon row is one row above each chest's animation rows.
-                        # Wood:  icon=1x0(col1,row0) -> NO row 0 in 1-indexed. 
-                        # Interpret: col N -> pixel x = (N-1)*32; row M -> pixel y = (M-1)*32
-                        #   Wood   closed: 1x1 -> x=0, y=0
-                        #   Iron   closed: 1x3 -> x=0, y=64
-                        #   Silver closed: 1x5 -> x=0, y=128
-                        #   Gold   closed: 1x7 -> x=0, y=192
-                        # Icon cells (1x0 etc.): row 0 doesn't exist in 1-indexed, so use closed frame as icon too.
-                        # Based on user: 1x1 closed, and 1x0 as combined icon.
-                        # Reinterpret: rows are 0-indexed => 1x1 = x=32,y=32; 1x0=x=32,y=0
-                        # => Each tile cell = 32px. col=1->x=(1)*32=32, row=0->y=0*32=0
-                        chest_defs = {
-                            'Wood Chest':   {'top_row': 0},
-                            'Iron Chest':   {'top_row': 2},
-                            'Silver Chest': {'top_row': 4},
-                            'Gold Chest':   {'top_row': 6},
-                        }
-                        for c_name, cfg in chest_defs.items():
-                            cx = 32 # Skip col 0
-                            ty_top = cfg['top_row'] * 32
-                            ty_bot = (cfg['top_row'] + 1) * 32
-                            if cx + 32 <= img.get_width() and ty_bot + 32 <= img.get_height():
-                                # Grab 32x64 area
-                                chest_surf = pygame.Surface((32, 64), pygame.SRCALPHA)
-                                chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_top, 32, 32)), (0, 0))
-                                chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_bot, 32, 32)), (0, 32))
-                                
-                                # Store the 32x64 raw surface
-                                dictionary[f"{c_name}_closed"] = chest_surf
-                                # For icon, scale to fit the 64x64 button without squashing
-                                # Since it's 32x64, we can scale to say 32x64 and center it in a 64x64 surf
-                                icon_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
-                                scaled_chest = pygame.transform.scale(chest_surf, (32, 64))
-                                icon_surf.blit(scaled_chest, (16, 0)) # Center horizontally
-                                dictionary[f"{c_name}_icon"] = icon_surf
+
+        # Recursive load for backgrounds, or flat for tiles/chests
+        is_bg = "backgrond" in path.lower()
+        
+        for root, dirs, files in os.walk(path):
+            for file in files:
+                if file.endswith((".png", ".jpg")):
+                    try:
+                        img = pygame.image.load(os.path.join(root, file)).convert_alpha()
+                        name = os.path.splitext(file)[0]
+                        # If bg, we might want to keep the subdirectory info in the name if needed, 
+                        # but user asked for "Pine forest sheet_0_0" style etc.
+                        # For now, let's keep it simple or use full path logic if main.py supports it.
+                        
+                        if is_chest and name == "TX Chest Animation":
+                            # Coordinates: user notation colNxrowM (1-indexed), actual pixel = (col-1)*32, (row-1)*32
+                            # Icon row is one row above each chest's animation rows.
+                            # Wood:  icon=1x0(col1,row0) -> NO row 0 in 1-indexed. 
+                            # Interpret: col N -> pixel x = (N-1)*32; row M -> pixel y = (M-1)*32
+                            #   Wood   closed: 1x1 -> x=0, y=0
+                            #   Iron   closed: 1x3 -> x=0, y=64
+                            #   Silver closed: 1x5 -> x=0, y=128
+                            #   Gold   closed: 1x7 -> x=0, y=192
+                            # Icon cells (1x0 etc.): row 0 doesn't exist in 1-indexed, so use closed frame as icon too.
+                            # Based on user: 1x1 closed, and 1x0 as combined icon.
+                            # Reinterpret: rows are 0-indexed => 1x1 = x=32,y=32; 1x0=x=32,y=0
+                            # => Each tile cell = 32px. col=1->x=(1)*32=32, row=0->y=0*32=0
+                            chest_defs = {
+                                'Wood Chest':   {'top_row': 0},
+                                'Iron Chest':   {'top_row': 2},
+                                'Silver Chest': {'top_row': 4},
+                                'Gold Chest':   {'top_row': 6},
+                            }
+                            for c_name, cfg in chest_defs.items():
+                                cx = 32 # Skip col 0
+                                ty_top = cfg['top_row'] * 32
+                                ty_bot = (cfg['top_row'] + 1) * 32
+                                if cx + 32 <= img.get_width() and ty_bot + 32 <= img.get_height():
+                                    # Grab 32x64 area
+                                    chest_surf = pygame.Surface((32, 64), pygame.SRCALPHA)
+                                    chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_top, 32, 32)), (0, 0))
+                                    chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_bot, 32, 32)), (0, 32))
+                                    
+                                    # Store the 32x64 raw surface
+                                    dictionary[f"{c_name}_closed"] = chest_surf
+                                    # For icon, scale to fit the 64x64 button without squashing
+                                    # Since it's 32x64, we can scale to say 32x64 and center it in a 64x64 surf
+                                    icon_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+                                    scaled_chest = pygame.transform.scale(chest_surf, (32, 64))
+                                    icon_surf.blit(scaled_chest, (16, 0)) # Center horizontally
+                                    dictionary[f"{c_name}_icon"] = icon_surf
+                                else:
+                                    s = pygame.Surface((TILE_SIZE, TILE_SIZE))
+                                    fb_colors = {'Wood Chest': (139,90,43), 'Iron Chest': (120,120,120), 'Silver Chest': (180,180,200), 'Gold Chest': (220,180,50)}
+                                    s.fill(fb_colors.get(c_name, (150,100,50)))
+                                    dictionary[f"{c_name}_icon"] = s
+                                    dictionary[f"{c_name}_closed"] = s
+                        elif is_spritesheet:
+                            w, h = img.get_size()
+                            for y in range(0, h, 32):
+                                for x in range(0, w, 32):
+                                    if x + 32 <= w and y + 32 <= h:
+                                        rect = pygame.Rect(x, y, 32, 32)
+                                        sub_img = img.subsurface(rect)
+                                        if sub_img.get_bounding_rect().width > 0:
+                                            scaled_img = pygame.transform.scale(sub_img, (TILE_SIZE, TILE_SIZE))
+                                            dictionary[f"{name}_{x//32}_{y//32}"] = scaled_img
+                        elif not is_chest:
+                            if is_bg:
+                                dictionary[name] = img # Don't scale BGs in editor either, keep raw
                             else:
-                                s = pygame.Surface((TILE_SIZE, TILE_SIZE))
-                                fb_colors = {'Wood Chest': (139,90,43), 'Iron Chest': (120,120,120), 'Silver Chest': (180,180,200), 'Gold Chest': (220,180,50)}
-                                s.fill(fb_colors.get(c_name, (150,100,50)))
-                                dictionary[f"{c_name}_icon"] = s
-                                dictionary[f"{c_name}_closed"] = s
-                    elif is_spritesheet:
-                        w, h = img.get_size()
-                        for y in range(0, h, 32):
-                            for x in range(0, w, 32):
-                                if x + 32 <= w and y + 32 <= h:
-                                    rect = pygame.Rect(x, y, 32, 32)
-                                    sub_img = img.subsurface(rect)
-                                    if sub_img.get_bounding_rect().width > 0:
-                                        scaled_img = pygame.transform.scale(sub_img, (TILE_SIZE, TILE_SIZE))
-                                        dictionary[f"{name}_{x//32}_{y//32}"] = scaled_img
-                    elif not is_chest:
-                        img = pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
-                        dictionary[name] = img
-                except Exception as e:
-                    print(f"Failed to load {file}: {e}")
+                                img = pygame.transform.scale(img, (TILE_SIZE, TILE_SIZE))
+                                dictionary[name] = img
+                    except Exception as e:
+                        print(f"Failed to load {file}: {e}")
 
 # --- Camera ---
 class Camera:
@@ -202,14 +228,16 @@ class Camera:
             self.scroll.x -= (mouse_x_after - mouse_x_before)
             self.scroll.y -= (mouse_y_after - mouse_y_before)
 
-    def screen_to_world(self, pos):
-        x = (pos[0] / self.zoom) + self.scroll.x
-        y = (pos[1] / self.zoom) + self.scroll.y
+    def screen_to_world(self, pos, parallax=1.0):
+        # World = (Screen / Zoom) + (Scroll * Parallax)
+        x = (pos[0] / self.zoom) + self.scroll.x * parallax
+        y = (pos[1] / self.zoom) + self.scroll.y * parallax
         return x, y
 
-    def world_to_screen(self, x, y):
-        sx = (x - self.scroll.x) * self.zoom
-        sy = (y - self.scroll.y) * self.zoom
+    def world_to_screen(self, x, y, parallax=1.0):
+        # Screen = round((World - Scroll * Parallax) * Zoom)
+        sx = round((x - self.scroll.x * parallax) * self.zoom)
+        sy = round((y - self.scroll.y * parallax) * self.zoom)
         return sx, sy
 
 # --- UI Components ---
@@ -310,15 +338,7 @@ class UIPanel:
         if is_bg_layer:
             start_y += 10
             bg = self.editor.state.get('bg_layers', {}).get(self.editor.current_layer, {})
-            img_name = bg.get('image') or '-- None --'
-            short = img_name[:18] if img_name else '-- None --'
-            self.buttons.append(UIButton(start_x, start_y, 250, 28, f"BG Img: {short}", self.cmd_select_bg_image))
-            start_y += 34
-            self.buttons.append(UIButton(start_x, start_y, 118, 26, f"OffX: {bg.get('offset_x', 0)}", self.cmd_bg_offset_x))
-            self.buttons.append(UIButton(start_x + 125, start_y, 118, 26, f"OffY: {bg.get('offset_y', 0)}", self.cmd_bg_offset_y))
-            start_y += 32
-            self.buttons.append(UIButton(start_x, start_y, 118, 26, f"TileW: {bg.get('tile_w', 64)}", self.cmd_bg_tile_w))
-            self.buttons.append(UIButton(start_x + 125, start_y, 118, 26, f"TileH: {bg.get('tile_h', 64)}", self.cmd_bg_tile_h))
+            self.buttons.append(UIButton(start_x, start_y, 118, 26, f"Parallax: {bg.get('parallax', 1.0)}", self.cmd_bg_parallax))
             start_y += 32
 
         self.palette_start_y = start_y + (190 if self.editor.current_tool == "Chest" else 50)
@@ -327,7 +347,7 @@ class UIPanel:
         self.editor.state = {
             'map_width': 10, 'map_height': 10,
             'layers': {i: {} for i in range(8)},
-            'bg_layers': {i: {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0} for i in range(3)},
+            'bg_layers': {i: {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0, 'parallax': 1.0} for i in range(3)},
             'entities': {'player_spawn': None, 'exit': None, 'enemies': {}, 'chests': {}}
         }
         self.editor.action_history.clear()
@@ -410,44 +430,48 @@ class UIPanel:
 
     def cmd_select_bg_image(self):
         root = _get_tk_root()
-        top = tk.Toplevel(root)
-        top.title("Select Background Image")
-        tile_names = list(self.editor.assets.tiles.keys())
-        selected = [self.editor.state['bg_layers'].get(self.editor.current_layer, {}).get('image')]
-        lb = tk.Listbox(top, height=15, width=40, selectmode=tk.SINGLE)
-        for name in tile_names:
-            lb.insert(tk.END, name)
-        if selected[0] in tile_names:
-            idx = tile_names.index(selected[0])
-            lb.select_set(idx)
-            lb.see(idx)
-        lb.pack(padx=5, pady=5)
-        def on_ok():
-            sel = lb.curselection()
-            selected[0] = tile_names[sel[0]] if sel else None
-            top.destroy()
-        def on_clear():
-            selected[0] = None
-            top.destroy()
-        btn_frame = tk.Frame(top)
-        btn_frame.pack(fill=tk.X)
-        tk.Button(btn_frame, text="OK", command=on_ok, bg='#4CAF50', fg='white', width=10).pack(side=tk.LEFT, padx=5, pady=5)
-        tk.Button(btn_frame, text="Clear", command=on_clear, width=10).pack(side=tk.LEFT, padx=5, pady=5)
-        top.transient(root); top.grab_set()
-        while top.winfo_exists():
-            try: root.update()
-            except tk.TclError: break
-            pygame.event.pump()
+        # Use standard file dialog to avoid freezing
+        initial_dir = os.path.abspath("assets/backgrond")
+        if not os.path.exists(initial_dir): os.makedirs(initial_dir, exist_ok=True)
+        
+        filepath = filedialog.askopenfilename(
+            parent=root, 
+            initialdir=initial_dir,
+            title="Select Background Image",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg")]
+        )
+        
+        if filepath:
+            try:
+                img_name = os.path.splitext(os.path.basename(filepath))[0]
+                # Load it into assets if not present
+                if img_name not in self.editor.assets.tiles:
+                    img = pygame.image.load(filepath).convert_alpha()
+                    # Scale according to panel settings or keep raw? 
+                    # Existing editor logic scales tiles to TILE_SIZE, but BGs are usually larger.
+                    # We'll store the raw image for BGs.
+                    self.editor.assets.tiles[img_name] = img
+                
+                layer = self.editor.current_layer
+                self.editor.state.setdefault('bg_layers', {})
+                self.editor.state['bg_layers'].setdefault(layer, {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0, 'parallax': 1.0})
+                self.editor.state['bg_layers'][layer]['image'] = img_name
+                self.editor.save_history()
+                self.setup_ui()
+            except Exception as e:
+                print(f"Failed to load background {filepath}: {e}")
+
+    def cmd_clear_bg(self):
         layer = self.editor.current_layer
-        self.editor.state.setdefault('bg_layers', {})
-        self.editor.state['bg_layers'].setdefault(layer, {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0})
-        self.editor.state['bg_layers'][layer]['image'] = selected[0]
-        self.editor.save_history()
-        self.setup_ui()
+        if 'bg_layers' in self.editor.state and layer in self.editor.state['bg_layers']:
+            self.editor.state['bg_layers'][layer]['image'] = None
+            self.editor.save_history()
+            self.setup_ui()
 
     def cmd_bg_offset_x(self): self._bg_prop_dialog("BG Offset", "Offset X (px):", "offset_x")
     def cmd_bg_offset_y(self): self._bg_prop_dialog("BG Offset", "Offset Y (px):", "offset_y")
     def cmd_bg_tile_w(self): self._bg_prop_dialog("BG Tile Size", "Tile Width (px):", "tile_w")
+    def cmd_bg_parallax(self): self._bg_prop_dialog("BG Parallax", "Scroll Factor (1.0=Normal, 0.1=Slow):", "parallax", is_int=False)
     def cmd_bg_tile_h(self): self._bg_prop_dialog("BG Tile Size", "Tile Height (px):", "tile_h")
 
     def set_layer(self, layer):
@@ -558,7 +582,7 @@ class LevelEditor:
             'map_width': 10,
             'map_height': 10,
             'layers': {i: {} for i in range(8)},
-            'bg_layers': {i: {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0} for i in range(3)},
+            'bg_layers': {i: {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0, 'parallax': 1.0} for i in range(3)},
             'entities': {
                 'player_spawn': None,
                 'exit': None,
@@ -778,10 +802,15 @@ class LevelEditor:
                 if event.type == pygame.MOUSEWHEEL:
                     self.camera.apply_zoom(event.y * 0.1, pygame.mouse.get_pos())
 
-                # Single-click canvas action (Rotate, Select, Player, Enemy, Exit, Chest)
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                     if not self.ui.rect.collidepoint(event.pos):
-                        wx, wy = self.camera.screen_to_world(event.pos)
+                        # Get parallax factor for current layer
+                        fac = 1.0
+                        if self.current_layer in [0, 1, 2]:
+                            bg_cfg = self.state.get('bg_layers', {}).get(self.current_layer, {})
+                            fac = float(bg_cfg.get('parallax', 1.0))
+                            
+                        wx, wy = self.camera.screen_to_world(event.pos, fac)
                         gx = int(wx // TILE_SIZE)
                         gy = int(wy // TILE_SIZE)
                         if self.current_tool not in ["Draw", "Erase"]:
@@ -792,7 +821,13 @@ class LevelEditor:
             mouse_buttons = pygame.mouse.get_pressed()
             if mouse_buttons[0] or mouse_buttons[2]:
                 mx, my = pygame.mouse.get_pos()
-                wx, wy = self.camera.screen_to_world((mx, my))
+                # Get parallax factor for current layer
+                fac = 1.0
+                if self.current_layer in [0, 1, 2]:
+                    bg_cfg = self.state.get('bg_layers', {}).get(self.current_layer, {})
+                    fac = float(bg_cfg.get('parallax', 1.0))
+                    
+                wx, wy = self.camera.screen_to_world((mx, my), fac)
                 grid_x = int(wx // TILE_SIZE)
                 grid_y = int(wy // TILE_SIZE)
                 if self.current_tool in ["Draw", "Erase"]:
@@ -802,48 +837,33 @@ class LevelEditor:
 
     def draw(self, surface):
         surface.fill(COLORS['bg'])
+        # Get parallax factor for grid and background layers
+        grid_fac = 1.0
+        if self.current_layer in [0, 1, 2]:
+            bg_cfg = self.state.get('bg_layers', {}).get(self.current_layer, {})
+            grid_fac = float(bg_cfg.get('parallax', 1.0))
 
         # Draw Grid Background
         for x in range(self.state['map_width']):
             for y in range(self.state['map_height']):
                 world_x = x * TILE_SIZE
                 world_y = y * TILE_SIZE
-                screen_x, screen_y = self.camera.world_to_screen(world_x, world_y)
-                scaled_size = TILE_SIZE * self.camera.zoom
+                # Manual world_to_screen with parallax factor & boundary rounding
+                screen_x = round((world_x - self.camera.scroll.x * grid_fac) * self.camera.zoom)
+                screen_y = round((world_y - self.camera.scroll.y * grid_fac) * self.camera.zoom)
+                next_sx = round(((x + 1) * TILE_SIZE - self.camera.scroll.x * grid_fac) * self.camera.zoom)
+                next_sy = round(((y + 1) * TILE_SIZE - self.camera.scroll.y * grid_fac) * self.camera.zoom)
+                sw = next_sx - screen_x
+                sh = next_sy - screen_y
                 
-                rect = pygame.Rect(screen_x, screen_y, scaled_size, scaled_size)
-                pygame.draw.rect(surface, COLORS['grid'], rect, 1)
+                rect = pygame.Rect(screen_x, screen_y, sw, sh)
+                pygame.draw.rect(surface, (40, 40, 40), rect, 1)
 
         # Draw Background Layers (0-2) as tiled images
         map_pixel_w = self.state['map_width'] * TILE_SIZE
         map_pixel_h = self.state['map_height'] * TILE_SIZE
         bg_layers_data = self.state.get('bg_layers', {})
-        for layer_idx in range(3):
-            bg = bg_layers_data.get(layer_idx, {})
-            img_name = bg.get('image')
-            if not img_name or img_name not in self.assets.tiles:
-                continue
-            base_img = self.assets.tiles[img_name]
-            tw = max(1, int(bg.get('tile_w', 64)))
-            th = max(1, int(bg.get('tile_h', 64)))
-            off_x = int(bg.get('offset_x', 0))
-            off_y = int(bg.get('offset_y', 0))
-            alpha_val = 255 if layer_idx == self.current_layer else 130
-            tile_surf = pygame.transform.scale(base_img, (tw, th))
-            # Tile across the full map, plus one extra tile in each direction
-            cols = map_pixel_w // tw + 2
-            rows = map_pixel_h // th + 2
-            for row in range(rows):
-                for col in range(cols):
-                    wx = off_x + col * tw
-                    wy = off_y + row * th
-                    sx, sy = self.camera.world_to_screen(wx, wy)
-                    sw = int(tw * self.camera.zoom)
-                    sh = int(th * self.camera.zoom)
-                    scaled_tile = pygame.transform.scale(base_img, (sw, sh))
-                    if alpha_val < 255:
-                        scaled_tile.set_alpha(alpha_val)
-                    surface.blit(scaled_tile, (sx, sy))
+        # Background Image Layers (Deprecated - No longer drawing full images)
 
         # Draw Layers
         for layer_idx in range(8):
@@ -859,9 +879,24 @@ class LevelEditor:
                     img = self.assets.tiles[tile_name]
                     if rot != 0:
                         img = pygame.transform.rotate(img, rot)
-                    screen_x, screen_y = self.camera.world_to_screen(gx * TILE_SIZE, gy * TILE_SIZE)
-                    scaled_size = int(TILE_SIZE * self.camera.zoom)
-                    scaled_img = pygame.transform.scale(img, (scaled_size, scaled_size))
+                    
+                    world_x, world_y = gx * TILE_SIZE, gy * TILE_SIZE
+                    
+                    # Apply Parallax if layer 0, 1, 2
+                    fac = 1.0
+                    if layer_idx in [0, 1, 2]:
+                        bg_cfg = self.state.get('bg_layers', {}).get(layer_idx, {})
+                        fac = float(bg_cfg.get('parallax', 1.0))
+                    
+                    # Manual world_to_screen with parallax factor & boundary rounding
+                    screen_x = round((world_x - self.camera.scroll.x * fac) * self.camera.zoom)
+                    screen_y = round((world_y - self.camera.scroll.y * fac) * self.camera.zoom)
+                    next_sx = round((world_x + TILE_SIZE - self.camera.scroll.x * fac) * self.camera.zoom)
+                    next_sy = round((world_y + TILE_SIZE - self.camera.scroll.y * fac) * self.camera.zoom)
+                    sw = next_sx - screen_x
+                    sh = next_sy - screen_y
+                    
+                    scaled_img = pygame.transform.scale(img, (sw, sh))
                     if alpha < 255:
                         scaled_img.set_alpha(alpha)
                     surface.blit(scaled_img, (screen_x, screen_y))
@@ -870,17 +905,35 @@ class LevelEditor:
         for e_type in ['chests', 'enemies', 'player_spawn', 'exit']:
             data = self.state['entities'][e_type]
             if not data: continue
-            
-            if e_type == 'player_spawn':
+                        # Unified entity drawing
+            if e_type == 'player_spawn' and data:
                 gx, gy = data
-                self._draw_entity_marker(surface, gx, gy, (30, 144, 255), "PLAYER")
-            elif e_type == 'exit':
+                self._draw_entity_marker(surface, gx, gy, (0, 255, 0), "P")
+            elif e_type == 'exit' and data:
                 gx, gy = data
-                self._draw_entity_marker(surface, gx, gy, (50, 205, 50), "EXIT")
+                self._draw_entity_marker(surface, gx, gy, (255, 0, 0), "E")
             elif e_type == 'enemies':
+                anim_frame = (pygame.time.get_ticks() // 100) % 10 # 10 FPS preview
                 for key, e_data in data.items():
                     gx, gy = map(int, key.split(','))
-                    self._draw_entity_marker(surface, gx, gy, (220, 30, 30), f"HP:{e_data['hp']}")
+                    if self.assets.wizard_frames:
+                        img = self.assets.wizard_frames[anim_frame]
+                        sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, (gy + 1) * TILE_SIZE - 64)
+                        svec = self.camera.world_to_screen((gx + 1) * TILE_SIZE, (gy + 1) * TILE_SIZE)
+                        # We want it aligned to the grid, 2 tiles high
+                        sw = svec[0] - sx
+                        sh = (svec[1] - sy) * 2 # Wizard display is roughly 2 tiles high
+                        # Actually 64x64 is 2x2 tiles. 
+                        # sy = (gy+1)*32 - 64 = gy-1 tile top.
+                        sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, (gy - 1) * TILE_SIZE)
+                        svec_br = self.camera.world_to_screen((gx + 2) * TILE_SIZE, (gy + 1) * TILE_SIZE)
+                        sw = svec_br[0] - sx
+                        sh = svec_br[1] - sy
+                        
+                        scaled = pygame.transform.scale(img, (sw, sh))
+                        surface.blit(scaled, (sx, sy))
+                    else:
+                        self._draw_entity_marker(surface, gx, gy, (255, 50, 50), f"HP:{e_data.get('hp', 100)}")
             elif e_type == 'chests':
                 for key, c_data in data.items():
                     gx, gy = map(int, key.split(','))
@@ -888,19 +941,29 @@ class LevelEditor:
                     closed_key = f"{ct}_closed"
                     if closed_key in self.assets.chests:
                         img = self.assets.chests[closed_key]
-                        # Draw 32x64 chest sitting on tile gy.
-                        # It should fill gy-1 and gy.
+                        
+                        # Use unified rounding for entity position and size
                         screen_x, screen_y = self.camera.world_to_screen(gx * TILE_SIZE, (gy - 1) * TILE_SIZE)
-                        scaled_w = int(TILE_SIZE * self.camera.zoom)
-                        scaled_h = int(TILE_SIZE * 2 * self.camera.zoom)
+                        next_sx = self.camera.world_to_screen((gx + 1) * TILE_SIZE, (gy + 1) * TILE_SIZE)[0]
+                        next_sy = self.camera.world_to_screen((gx + 1) * TILE_SIZE, (gy + 1) * TILE_SIZE)[1]
+                        
+                        scaled_w = round(TILE_SIZE * self.camera.zoom)
+                        scaled_h = round(TILE_SIZE * 2 * self.camera.zoom)
+                        # To be perfectly precise with tiles:
+                        sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, (gy - 1) * TILE_SIZE)
+                        sx2, sy2 = self.camera.world_to_screen((gx + 1) * TILE_SIZE, (gy + 1) * TILE_SIZE)
+                        scaled_w = sx2 - sx
+                        scaled_h = sy2 - sy
+                        
                         scaled_img = pygame.transform.scale(img, (scaled_w, scaled_h))
-                        surface.blit(scaled_img, (screen_x, screen_y))
+                        surface.blit(scaled_img, (sx, sy))
+
                         # Draw item indicator
                         item = c_data.get('items', '?')
                         chance = c_data.get('chance', 100)
                         if self.camera.zoom > 0.5:
                             label = font.render(f"{item[:1]} {chance}%", True, (255,255,255))
-                            lx, ly = screen_x + 2, screen_y + 2
+                            lx, ly = sx + 2, sy + 2
                             surface.blit(label, (lx, ly))
                     else:
                         self._draw_entity_marker(surface, gx, gy, (255, 128, 0), f"{ct[:1]}C")
@@ -908,11 +971,17 @@ class LevelEditor:
         # Draw Hover Highlight
         mouse_pos = pygame.mouse.get_pos()
         if not self.ui.rect.collidepoint(mouse_pos):
-            wx, wy = self.camera.screen_to_world(mouse_pos)
+            # Use parallax factor for highlight
+            fac = 1.0
+            if self.current_layer in [0, 1, 2]:
+                bg_cfg = self.state.get('bg_layers', {}).get(self.current_layer, {})
+                fac = float(bg_cfg.get('parallax', 1.0))
+                
+            wx, wy = self.camera.screen_to_world(mouse_pos, fac)
             gx = int(wx // TILE_SIZE)
             gy = int(wy // TILE_SIZE)
             if 0 <= gx < self.state['map_width'] and 0 <= gy < self.state['map_height']:
-                sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, gy * TILE_SIZE)
+                sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, gy * TILE_SIZE, fac)
                 sz = TILE_SIZE * self.camera.zoom
                 pygame.draw.rect(surface, COLORS['highlight'], (sx, sy, sz, sz), max(1, int(2 * self.camera.zoom)))
 
