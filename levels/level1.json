@@ -3,7 +3,10 @@
     "map_height": 10,
     "layers": {
         "0": {},
-        "1": {},
+        "1": {
+            "30,7": "Garden Decorations_2_3",
+            "30,6": "Garden Decorations_2_2"
+        },
         "2": {
             "30,7": "Tree1_6_0",
             "30,6": "Tree1_6_0",
@@ -392,8 +395,8 @@
             "image": null,
             "offset_x": 0,
             "offset_y": 0,
-            "tile_w": 64,
-            "tile_h": 64,
+            "tile_w": 100,
+            "tile_h": 100,
             "rot": 0
         },
         "2": {
@@ -416,9 +419,8 @@
         ],
         "enemies": {},
         "chests": {
-            "12,1": {
+            "31,7": {
                 "type": "Gold Chest",
-                "items": "Knife",
                 "chance": 100
             }
         }

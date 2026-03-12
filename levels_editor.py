@@ -130,23 +130,35 @@ class AssetManager:
                         # Reinterpret: rows are 0-indexed => 1x1 = x=32,y=32; 1x0=x=32,y=0
                         # => Each tile cell = 32px. col=1->x=(1)*32=32, row=0->y=0*32=0
                         chest_defs = {
-                            'Wood Chest':   {'icon': (32, 0),   'closed': (32, 32)},
-                            'Iron Chest':   {'icon': (32, 64),  'closed': (32, 96)},
-                            'Silver Chest': {'icon': (32, 128), 'closed': (32, 160)},
-                            'Gold Chest':   {'icon': (32, 192), 'closed': (32, 224)},
+                            'Wood Chest':   {'top_row': 0},
+                            'Iron Chest':   {'top_row': 2},
+                            'Silver Chest': {'top_row': 4},
+                            'Gold Chest':   {'top_row': 6},
                         }
-                        for c_name, coords in chest_defs.items():
-                            for kind, (cx, cy) in coords.items():
-                                if cx + 32 <= img.get_width() and cy + 32 <= img.get_height():
-                                    sub_img = img.subsurface(pygame.Rect(cx, cy, 32, 32))
-                                    scaled_img = pygame.transform.scale(sub_img, (TILE_SIZE, TILE_SIZE))
-                                    dictionary[f"{c_name}_{kind}"] = scaled_img
-                                else:
-                                    # Fallback colored placeholder
-                                    s = pygame.Surface((TILE_SIZE, TILE_SIZE))
-                                    fb_colors = {'Wood Chest': (139,90,43), 'Iron Chest': (120,120,120), 'Silver Chest': (180,180,200), 'Gold Chest': (220,180,50)}
-                                    s.fill(fb_colors.get(c_name, (150,100,50)))
-                                    dictionary[f"{c_name}_{kind}"] = s
+                        for c_name, cfg in chest_defs.items():
+                            cx = 32 # Skip col 0
+                            ty_top = cfg['top_row'] * 32
+                            ty_bot = (cfg['top_row'] + 1) * 32
+                            if cx + 32 <= img.get_width() and ty_bot + 32 <= img.get_height():
+                                # Grab 32x64 area
+                                chest_surf = pygame.Surface((32, 64), pygame.SRCALPHA)
+                                chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_top, 32, 32)), (0, 0))
+                                chest_surf.blit(img.subsurface(pygame.Rect(cx, ty_bot, 32, 32)), (0, 32))
+                                
+                                # Store the 32x64 raw surface
+                                dictionary[f"{c_name}_closed"] = chest_surf
+                                # For icon, scale to fit the 64x64 button without squashing
+                                # Since it's 32x64, we can scale to say 32x64 and center it in a 64x64 surf
+                                icon_surf = pygame.Surface((TILE_SIZE, TILE_SIZE), pygame.SRCALPHA)
+                                scaled_chest = pygame.transform.scale(chest_surf, (32, 64))
+                                icon_surf.blit(scaled_chest, (16, 0)) # Center horizontally
+                                dictionary[f"{c_name}_icon"] = icon_surf
+                            else:
+                                s = pygame.Surface((TILE_SIZE, TILE_SIZE))
+                                fb_colors = {'Wood Chest': (139,90,43), 'Iron Chest': (120,120,120), 'Silver Chest': (180,180,200), 'Gold Chest': (220,180,50)}
+                                s.fill(fb_colors.get(c_name, (150,100,50)))
+                                dictionary[f"{c_name}_icon"] = s
+                                dictionary[f"{c_name}_closed"] = s
                     elif is_spritesheet:
                         w, h = img.get_size()
                         for y in range(0, h, 32):
@@ -876,9 +888,12 @@ class LevelEditor:
                     closed_key = f"{ct}_closed"
                     if closed_key in self.assets.chests:
                         img = self.assets.chests[closed_key]
-                        screen_x, screen_y = self.camera.world_to_screen(gx * TILE_SIZE, gy * TILE_SIZE)
-                        scaled_size = int(TILE_SIZE * self.camera.zoom)
-                        scaled_img = pygame.transform.scale(img, (scaled_size, scaled_size))
+                        # Draw 32x64 chest sitting on tile gy.
+                        # It should fill gy-1 and gy.
+                        screen_x, screen_y = self.camera.world_to_screen(gx * TILE_SIZE, (gy - 1) * TILE_SIZE)
+                        scaled_w = int(TILE_SIZE * self.camera.zoom)
+                        scaled_h = int(TILE_SIZE * 2 * self.camera.zoom)
+                        scaled_img = pygame.transform.scale(img, (scaled_w, scaled_h))
                         surface.blit(scaled_img, (screen_x, screen_y))
                         # Draw item indicator
                         item = c_data.get('items', '?')
