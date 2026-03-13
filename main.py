@@ -48,6 +48,30 @@ def draw_circle(surf, center, radius, color, width, progress=1.0):
     if progress > 0:
         pygame.draw.arc(surf, color, rect, -math.pi/2, -math.pi/2 + (math.pi*2*progress), width + 2)
 
+def get_current_level_num(level_path: Path) -> int:
+    """Extract level number from level filename (e.g., 'level1.json' -> 1)"""
+    name = level_path.stem
+    if name.startswith('level'):
+        try:
+            return int(name[5:])  # Extract number after 'level'
+        except ValueError:
+            return 1
+    return 1
+
+def get_next_level_path(current_level_num: int) -> Path:
+    """Get path to next level file"""
+    next_num = current_level_num + 1
+    return BASE_DIR / "levels" / f"level{next_num}.json"
+
+def get_all_level_files() -> list:
+    """Get list of all level files sorted by number"""
+    levels_dir = BASE_DIR / "levels"
+    if not levels_dir.exists():
+        return []
+    level_files = sorted(levels_dir.glob("level*.json"), 
+                        key=lambda p: get_current_level_num(p))
+    return level_files
+
 # ─────────────────────────── TILE BANK ───────────────────────────
 
 class TileBank:
@@ -319,14 +343,6 @@ class GameMap:
                             img = pygame.transform.scale(tile_img, (tw, th))
                             surf.blit(img, (x, y))
                 except: continue
-        
-        # Draw Enemies
-        for enemy in self.enemies:
-            enemy.draw(surf, camera_x, camera_y, zoom)
-            
-        # Draw Chests
-        for chest in self.chests:
-            chest.draw(surf, camera_x, camera_y, zoom, True, font)
 
 # ─────────────────────────── ENEMY ───────────────────────────────
 
@@ -474,10 +490,21 @@ def main():
     
     font_lg = load_font(72); font_md = load_font(32); font_sm = load_font(16)
     
-    if not LEVEL_PATH.exists(): sys.exit()
-    with open(LEVEL_PATH, "r", encoding="utf-8") as f:
+    # Get all available level files
+    all_levels = get_all_level_files()
+    if not all_levels:
+        print("No level files found in levels/ directory")
+        sys.exit()
+    
+    # Start with level1.json or first available level
+    current_level_idx = 0
+    current_level_path = all_levels[0]
+    is_last_level = (current_level_idx == len(all_levels) - 1)
+    
+    # Load initial level
+    with open(current_level_path, "r", encoding="utf-8") as f:
         level_data = json.load(f)
-        
+    
     tb = TileBank()
     gmap = GameMap(level_data, tb)
     player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
@@ -569,7 +596,33 @@ def main():
         # Drawing
         screen.fill((20, 20, 25))
         gmap.draw(screen, camera_x, camera_y, ZOOM, font_sm)
-        player.draw(screen, camera_x, camera_y, ZOOM)
+        
+        # Draw entities with z-order priority (chests -> enemies -> player)
+        # Format: (z_order, y_coord, entity_type, entity)
+        entities = []
+        
+        # Chests (z=0, behind)
+        for chest in gmap.chests:
+            entities.append((0, chest.world_y, "chest", chest))
+        
+        # Enemies (z=1, middle)
+        for enemy in gmap.enemies:
+            entities.append((1, enemy.world_y, "enemy", enemy))
+        
+        # Player (z=2, front)
+        entities.append((2, player.rect.centery, "player", player))
+        
+        # Sort by z-order first, then by y-coordinate
+        entities.sort(key=lambda e: (e[0], e[1]))
+        
+        # Draw in sorted order
+        for z_order, _, entity_type, entity in entities:
+            if entity_type == "player":
+                entity.draw(screen, camera_x, camera_y, ZOOM)
+            elif entity_type == "enemy":
+                entity.draw(screen, camera_x, camera_y, ZOOM)
+            elif entity_type == "chest":
+                entity.draw(screen, camera_x, camera_y, ZOOM, True, font_sm)
         
         # Interaction Prompts (for Exits or Chests)
         if not game_over:
@@ -592,22 +645,74 @@ def main():
                     cx_x = round(((active_chest.world_x + 16) - camera_x) * ZOOM)
                     cx_y = round((active_chest.world_y - camera_y) * ZOOM)
                     draw_text(screen, font_md, txt, cx_x - tw//2, cx_y - round(8*ZOOM), (200, 255, 100))
-                # Removed draw_circle for chests as per user request
         
-        # UI section removed (redundant)
-
+        # Game Over Screen
         if game_over:
             overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 230)); screen.blit(overlay, (0, 0))
+            overlay.fill((0, 0, 0, 230))
+            screen.blit(overlay, (0, 0))
+            
             msg = font_lg.render("จบเกมแล้ว", True, (255, 255, 255))
             screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H//2 - msg.get_height()//2))
-            restart_txt = font_md.render("Press R to Restart", True, (200, 200, 200))
-            screen.blit(restart_txt, (SCREEN_W//2 - restart_txt.get_width()//2, SCREEN_H//2 + 80))
-            if pygame.key.get_pressed()[pygame.K_r]:
-                player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
-                for c in gmap.chests: c.reset()
-                exit_hold_t = 0
-                game_over = False
+            
+            if is_last_level:
+                # Last level reached - show game end message
+                next_msg = font_md.render("ยินดีด้วย! คุณชนะเกมแล้ว", True, (255, 255, 100))
+                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 50))
+                restart_txt = font_md.render("Press R to Restart Level / Enter to New Game", True, (200, 200, 200))
+                screen.blit(restart_txt, (SCREEN_W//2 - restart_txt.get_width()//2, SCREEN_H//2 + 100))
+                
+                # R = Restart current level5
+                if pygame.key.get_pressed()[pygame.K_r]:
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                    for c in gmap.chests: c.reset()
+                    exit_hold_t = 0
+                    game_over = False
+                
+                # Enter = New Game (go back to level1)
+                if pygame.key.get_pressed()[pygame.K_RETURN]:
+                    current_level_idx = 0
+                    current_level_path = all_levels[0]
+                    is_last_level = (current_level_idx == len(all_levels) - 1)
+                    
+                    with open(current_level_path, "r", encoding="utf-8") as f:
+                        level_data = json.load(f)
+                    
+                    gmap = GameMap(level_data, tb)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                    camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                    camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                    exit_hold_t = 0
+                    game_over = False
+            else:
+                # More levels available
+                next_msg = font_md.render("Press ENTER for Next Level", True, (100, 255, 100))
+                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 50))
+                restart_txt = font_md.render("Press R to Restart", True, (200, 200, 200))
+                screen.blit(restart_txt, (SCREEN_W//2 - restart_txt.get_width()//2, SCREEN_H//2 + 100))
+                
+                if pygame.key.get_pressed()[pygame.K_RETURN]:
+                    # Load next level
+                    current_level_idx += 1
+                    if current_level_idx < len(all_levels):
+                        current_level_path = all_levels[current_level_idx]
+                        is_last_level = (current_level_idx == len(all_levels) - 1)
+                        
+                        with open(current_level_path, "r", encoding="utf-8") as f:
+                            level_data = json.load(f)
+                        
+                        gmap = GameMap(level_data, tb)
+                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                        camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                        camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                        exit_hold_t = 0
+                        game_over = False
+                
+                if pygame.key.get_pressed()[pygame.K_r]:
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                    for c in gmap.chests: c.reset()
+                    exit_hold_t = 0
+                    game_over = False
 
         pygame.display.flip()
     pygame.quit()
