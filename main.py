@@ -332,10 +332,10 @@ class GameMap:
 
 class Enemy:
     def __init__(self, x, y, hp, tb: TileBank):
-        # Wizard is roughly 64x64, but we'll use a 32x64 hitbox
+        # Portal Wizard is 64x64
         self.world_x = x * TILE_SIZE
         self.world_y = (y + 1) * TILE_SIZE - 64 # Bottom aligned with tile
-        self.rect = pygame.Rect(self.world_x, self.world_y, 32, 64)
+        self.rect = pygame.Rect(self.world_x, self.world_y, 64, 64)
         self.hp = hp
         self.tb = tb
         self.dir = 1 # 1=right, -1=left
@@ -351,13 +351,17 @@ class Enemy:
         next_x = self.rect.x + move_dist
         
         # Wall Collision & Edge detection
-        grid_x = int(next_x // TILE_SIZE) if self.dir > 0 else int((next_x + 31) // TILE_SIZE)
         grid_y = int((self.rect.bottom - 1) // TILE_SIZE)
         
-        # Wall ahead?
-        hit_wall = gmap.is_solid(int((next_x + (32 if self.dir > 0 else 0)) // TILE_SIZE), grid_y)
-        # Floor ahead?
-        no_floor = not gmap.is_solid(int((next_x + (16 if self.dir > 0 else 16)) // TILE_SIZE), grid_y + 1)
+        # Wall ahead? (Check leading edge)
+        check_x = next_x + (64 if self.dir > 0 else 0)
+        hit_wall = gmap.is_solid(int(check_x // TILE_SIZE), grid_y) or \
+                   gmap.is_solid(int(check_x // TILE_SIZE), grid_y - 1)
+        
+        # Floor ahead? (Check bottom middle or leading edge)
+        # Using a point slightly ahead of the hitbox center to detect edges
+        floor_check_x = next_x + (48 if self.dir > 0 else 16)
+        no_floor = not gmap.is_solid(int(floor_check_x // TILE_SIZE), grid_y + 1)
         
         if hit_wall or no_floor:
             self.dir *= -1
