@@ -529,6 +529,8 @@ class Enemy:
         # Portal Wizard is 64x64
         self.world_x = x * TILE_SIZE
         self.world_y = (y + 1) * TILE_SIZE - 64 # Bottom aligned with tile
+        self.px = float(self.world_x)
+        self.py = float(self.world_y)
         self.rect = pygame.Rect(self.world_x, self.world_y, 64, 64)
         self.hp = hp
         self.tb = tb
@@ -602,8 +604,8 @@ class Enemy:
         # Pacing logic (Common to all states for animation)
         self.frame = (self.frame + self.anim_speed * dt) % 10
         
-        move_dist = self.speed * self.dir
-        next_x = self.rect.x + move_dist
+        move_dist = self.speed * self.dir * 60 * dt
+        next_x = self.px + move_dist
         
         # Wall Collision & Edge detection
         grid_y = int((self.rect.bottom - 1) // TILE_SIZE)
@@ -625,8 +627,9 @@ class Enemy:
                 # If chased into a wall/edge, just stop or return
                 pass # Already can't move further if hit_wall/no_floor
         else:
-            self.rect.x += move_dist
-            self.world_x = self.rect.x
+            self.px += move_dist
+            self.rect.x = round(self.px)
+            self.world_x = self.px
             
     def draw(self, surf, cam_x, cam_y, zoom):
         sx = round((self.world_x - cam_x) * zoom)
@@ -653,7 +656,9 @@ class Player:
     ATTACK_ANIMS = ("attack_1", "attack_2", "attack_3")
 
     def __init__(self, x, y, pab: 'PlayerAnimationBank' = None, sb: 'SoundBank' = None):
-        self.rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, PLAYER_HITBOX_W, PLAYER_HITBOX_H)
+        self.px = float(x * TILE_SIZE)
+        self.py = float(y * TILE_SIZE)
+        self.rect = pygame.Rect(round(self.px), round(self.py), PLAYER_HITBOX_W, PLAYER_HITBOX_H)
         self.sb = sb
         self.vx = 0.0
         self.vy = 0.0
@@ -762,8 +767,10 @@ class Player:
                 self.vx = speed
                 self.direction = 1
 
-        self.rect.x += round(self.vx)
+        self.px += self.vx * 60 * dt
+        self.rect.x = round(self.px)
         self.collide(gmap, "horizontal")
+        self.px = float(self.rect.x) # Sync back after collision
 
         if not self.on_ground and self.vy < 0:
             self.fall_start_y = self.rect.y
@@ -776,8 +783,10 @@ class Player:
                 self.jump_cd = 60
                 self.fall_start_y = self.rect.y
 
-        self.rect.y += round(self.vy)
+        self.py += self.vy * 60 * dt
+        self.rect.y = round(self.py)
         self.collide(gmap, "vertical")
+        self.py = float(self.rect.y) # Sync back after collision
 
         # อัปเดตจำนวนเฟรมที่อยู่อากาศ (กันการกระพริบ idle/jump, walk/jump)
         if self.on_ground:
@@ -1049,8 +1058,10 @@ def main():
                                 break
                         if dest_pos:
                             dgx, dgy = map(int, dest_pos.split(','))
-                            player.rect.x = dgx * TILE_SIZE
-                            player.rect.y = dgy * TILE_SIZE
+                            player.px = float(dgx * TILE_SIZE)
+                            player.py = float(dgy * TILE_SIZE)
+                            player.rect.x = round(player.px)
+                            player.rect.y = round(player.py)
                             player.warp_timer = 0.0
                             sb.play("warp")
                             # Snap camera immediately after warp
