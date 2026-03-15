@@ -442,6 +442,7 @@ class Enemy:
         self.anim_speed = 8.0 # FPS
         self.defeated = False  # Track if enemy has been defeated
         self.hit_cooldown = 0.0 # Damage cooldown
+        self.hit_flash_timer = 0.0 # Visual feedback duration
 
         # AI States
         self.spawn_x = self.world_x
@@ -456,6 +457,8 @@ class Enemy:
         
         if self.hit_cooldown > 0:
             self.hit_cooldown -= dt
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
 
         # Distance to player
         dx = player.rect.centerx - self.rect.centerx
@@ -539,6 +542,13 @@ class Enemy:
             if self.dir < 0:
                 img = pygame.transform.flip(img, True, False)
             scaled = pygame.transform.scale(img, (sz, sz))
+            
+            if self.hit_flash_timer > 0:
+                # Tint red when damaged
+                tint = pygame.Surface(scaled.get_size(), pygame.SRCALPHA)
+                tint.fill((255, 0, 0, 150))
+                scaled.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
             surf.blit(scaled, (sx, sy))
 
 # ─────────────────────────── PLAYER ──────────────────────────────
@@ -561,6 +571,9 @@ class Player:
         self.current_anim = "idle"
         self.anim_frame = 0.0
         self.dead = False
+        self.death_anim_finished = False
+        self.hp = 100
+        self.hit_flash_timer = 0.0
         self.defending = False
         # Combo โจมตี: คลิกซ้ำเล่น ATTACK 1 → 2 → 3 ต่อกัน
         self.attack_combo_next = None  # "attack_2" หรือ "attack_3" หรือ None
@@ -599,22 +612,32 @@ class Player:
             return "walk"
         return "idle"
 
-    def update(self, gmap: GameMap, can_move=True):
+    def update(self, gmap: GameMap, can_move=True, dt=0):
+        if self.hit_flash_timer > 0:
+            self.hit_flash_timer -= dt
+            
+        if not self.dead and self.hp <= 0:
+            self.dead = True
+            self.hit_flash_timer = 0 # Reset flash when dead
+
+        if self.dead:
+            self.current_anim = "death" # Force death animation
+            # อัปเดตแอนิเมชันตอนตาย
+            if self.pab:
+                anim = self.pab.get_animation("death")
+                if anim:
+                    self.anim_frame += anim["fps"] / FPS
+                    if self.anim_frame >= anim["frame_count"] - 1:
+                        self.anim_frame = anim["frame_count"] - 1
+                        self.death_anim_finished = True
+            return
+
         keys = pygame.key.get_pressed()
         self.vx = 0
         if self.jump_cd > 0:
             self.jump_cd -= 1
         if self.stun_timer > 0:
             self.stun_timer -= 1
-
-        if self.dead:
-            # อัปเดตแอนิเมชันอย่างเดียว
-            if self.pab:
-                anim = self.pab.get_animation("death")
-                if anim:
-                    self.anim_frame += anim["fps"] / FPS
-                    self.anim_frame = min(self.anim_frame, anim["frame_count"] - 1)
-            return
 
         mouse_buttons = pygame.mouse.get_pressed()
         self.defending = mouse_buttons[2] # Right click to defend
@@ -737,6 +760,12 @@ class Player:
         # ให้เท้าติดพื้น: เลื่อนภาพลงตาม PLAYER_FEET_OFFSET (พิกเซลในเฟรมต้นทาง)
         feet_shift = int(PLAYER_FEET_OFFSET * scale_factor)
         offset_y = round(self.rect.height * zoom) - scaled_h + feet_shift
+        
+        if self.hit_flash_timer > 0:
+            tint = pygame.Surface(scaled_frame.get_size(), pygame.SRCALPHA)
+            tint.fill((255, 0, 0, 150))
+            scaled_frame.blit(tint, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
         surf.blit(scaled_frame, (sx + offset_x, sy + offset_y))
 
 # ─────────────────────────── MAIN GAME ───────────────────────────
@@ -793,6 +822,21 @@ def main():
                 running = False
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 player.request_attack()
+            
+            # Reset Level with 'R'
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_r:
+                if game_over and player.dead:
+                    # Reset game state for current level
+                    with open(current_level_path, "r", encoding="utf-8") as f:
+                        level_data = json.load(f)
+                    gmap = GameMap(level_data, tb)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                    camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                    game_over = False
+                    level_score = 0 # Reset level score on retry
+                    # Optionally keep cumulative_score or reset it? 
+                    # Usually, retry only resets current level score from that attempt.
 
         if not game_over:
             # Check interaction
@@ -853,17 +897,15 @@ def main():
                 active_chest.hold_timer = 0
 
             can_move = not ((active_chest and active_chest.state == "opening") or interacting_with_exit)
-            player.update(gmap, can_move)
+            player.update(gmap, can_move, dt)
 
             # ตายเมื่อตกออกจากแผนที่
             if player.rect.y > gmap.height * TILE_SIZE:
                 player.dead = True
 
-            # หลังตาย เล่นแอนิเมชัน DEATH แล้วค่อยแสดง game over
-            if player.dead:
-                death_timer += dt
-                if death_timer >= 2.0:
-                    game_over = True
+            # หลังตาย เล่นแอนิเมชัน DEATH จนจบแล้วค่อยแสดง game over
+            if player.dead and player.death_anim_finished:
+                game_over = True
 
             # Melee Combat System
             if player.current_anim in player.ATTACK_ANIMS:
@@ -878,10 +920,24 @@ def main():
                         if attack_rect.colliderect(enemy.rect):
                             enemy.hp -= 20
                             enemy.hit_cooldown = 1.0 # 1s cooldown per hit
+                            enemy.hit_flash_timer = 0.2
                             if enemy.hp <= 0:
                                 enemy.defeated = True
                                 level_score += 100
                                 cumulative_score += 100
+
+            # Enemy vs Player Combat Logic
+            for enemy in gmap.enemies:
+                if not enemy.defeated and enemy.hit_cooldown <= 0:
+                    if player.rect.colliderect(enemy.rect):
+                        # Damage player if not defending
+                        if not player.defending:
+                            player.hp -= 20
+                            player.hit_flash_timer = 0.2
+                        
+                        # Enemy returns to spawn after hitting player (even if blocked)
+                        enemy.state = "return"
+                        enemy.hit_cooldown = 1.0
 
             
             # Update Enemies
@@ -978,20 +1034,42 @@ def main():
             screen.blit(overlay, (0, 0))
             
             # Show different message based on whether it's the last level
-            if is_last_level:
+            if player.dead:
+                msg_text = "แพ้เกม"
+                sub_msg = "กด [R] เพื่อเริ่มใหม่"
+                
+                # Handle reset immediately to be sure
+                if pygame.key.get_pressed()[pygame.K_r]:
+                    with open(current_level_path, "r", encoding="utf-8") as f:
+                        level_data = json.load(f)
+                    gmap = GameMap(level_data, tb)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                    camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                    game_over = False
+                    level_score = 0
+                    death_timer = 0.0
+                    exit_hold_t = 0
+            elif is_last_level:
                 msg_text = "จบเกมแล้ว"
+                sub_msg = ""
             else:
                 current_level_num = current_level_idx + 1
                 msg_text = f"จบแผนที่ {current_level_num}"
+                sub_msg = ""
             
             msg = font_lg.render(msg_text, True, (255, 255, 255))
             screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H//2 - msg.get_height()//2))
             
+            if sub_msg:
+                sub = font_md.render(sub_msg, True, (255, 255, 100))
+                screen.blit(sub, (SCREEN_W//2 - sub.get_width()//2, SCREEN_H//2 + 100))
+
             level_score_display = level_score if level_score >= 0 else 0
             level_info = font_md.render(f"Level Score: {level_score_display}", True, (255, 255, 100))
             screen.blit(level_info, (SCREEN_W//2 - level_info.get_width()//2, SCREEN_H//2 + 50))
             
-            if is_last_level:
+            if not player.dead and is_last_level:
                 # Last level reached - show game end message
                 next_msg = font_md.render("ยินดีด้วย! คุณชนะเกมแล้ว", True, (255, 255, 100))
                 screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 100))
@@ -1039,7 +1117,7 @@ def main():
                     exit_hold_t = 0
                     death_timer = 0.0
                     game_over = False
-            else:
+            elif not player.dead:
                 # More levels available
                 next_msg = font_md.render("Press ENTER for Next Level", True, (100, 255, 100))
                 screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 100))
