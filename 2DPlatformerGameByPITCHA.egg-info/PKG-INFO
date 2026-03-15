@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: 2DPlatformerGameByPITCHA
+Version: 1.0.0
+Summary: A 2D Platformer Game demonstrating OOP, SOLID, and Design Patterns
+Author: PITCHA
+Requires-Python: >=3.12
+Requires-Dist: pygame-ce>=2.3.0

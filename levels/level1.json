@@ -481,7 +481,7 @@
     "entities": {
         "player_spawn": [
             12,
-            5
+            4
         ],
         "exit": [
             36,
@@ -496,7 +496,12 @@
         "chests": {
             "32,7": {
                 "type": "Gold Chest",
-                "items": ["Knife","Sword","food","potion"],
+                "items": [
+                    "Knife",
+                    "Sword",
+                    "food",
+                    "potion"
+                ],
                 "chance": 100
             }
         },
