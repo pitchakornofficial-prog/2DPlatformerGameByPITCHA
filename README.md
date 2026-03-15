@@ -1,62 +1,94 @@
-# 🎮 2D Platformer Game by PITCHA
-
-โปรเจกต์เกมแนว 2D Platformer ที่พัฒนาด้วยภาษา Python และไลบรารี Pygame โดยเน้นการออกแบบด้วยหลักการ Object-Oriented Programming (OOP) ที่มีความยืดหยุ่นและการทำงานที่ซับซ้อน
-
-## 🚀 ฟีเจอร์หลัก (Key Features)
-
-*   **ระบบต่อสู้แบบ Combo Melee**: ผู้เล่นสามารถโจมตีต่อเนื่อง 3 จังหวะ (Attack 1 → 2 → 3) ได้ด้วยการคลิกซ้ายรัวๆ
-*   **ระบบกล่องสมบัติ (Advanced Chest System)**: การเปิดกล่องมีการ Hold Key (กดค้าง), แอนิเมชันเปิด, และการสุ่มไอเทม (Loot Shuffle) ก่อนรับรางวัล
-*   **ระบบพอร์ทัล (Portal Warp)**: การเคลื่อนย้ายตัวละครระหว่างจุดต่างๆ ในแผนที่ด้วยการกด [E] ค้าง
-*   **เครื่องมือสร้างด่าน (Powerful Level Editor)**: มาพร้อมระบบ Layer (มีถึง 8 เลเยอร์), พารัลแลกซ์ (Parallax), และการกำหนดค่า Entity (HP ของศัตรู, ไอเทมในกล่อง) อย่างละเอียด
-*   **ระบบฟิสิกส์และคลาวด์**: มีระบบแรงโน้มถ่วง, การสะดุดเมื่อตกจากที่สูง (Stun), และกล้อง (Camera) ที่นุ่มนวลด้วยระบบ Lerp
-*   **เอฟเฟกต์ภาพ**: มีระบบอนุภาค (Particle System) เช่น เลือดกระจายเมื่อศัตรูถูกกำจัด และระบบ Lighting/Flash เมื่อโดนโจมตี
-
-## 🎮 การควบคุม (Controls)
-
-| การกระทำ | ปุ่มควบคุม |
-| :--- | :--- |
-| **เคลื่อนที่** | `W`, `A`, `S`, `D` หรือ `ปุ่มลูกศร` |
-| **กระโดด** | `Space`, `W` หรือ `Up` |
-| **โจมตี (Combo)** | `คลิกซ้าย` (Mouse Left Click) |
-| **ป้องกัน** | `คลิกขวา` (Mouse Right Click) |
-| **มีปฏิสัมพันธ์ (เปิดกล่อง/วาร์พ/ออกด่าน)** | กด `E` ค้าง (Hold [E]) |
-| **เริ่มใหม่ (เมื่อตาย)** | กด `R` ในหน้า Game Over |
-
-## 🏗️ โครงสร้างสถาปัตยกรรม (System Architecture)
-
-ระบบถูกออกแบบมาให้เป็นโมดูลาร์โดยแบ่งคลาสหลักดังนี้:
-
-*   **`Player`**: จัดการสถานะผู้เล่น, การเคลื่อนที่, แอนิเมชัน, และคอมโบการต่อสู้
-*   **`Enemy` (Portal Wizard)**: AI ศัตรูที่มีสถานะ Roam (ลาดตระเวน), Chase (ไล่ล่า), และ Return (กลับจุดเกิด)
-*   **`GameMap`**: จัดการข้อมูลเลเยอร์และการวาดแผนที่แบบ Parallax เลเยอร์
-*   **`TileBank` & `PlayerAnimationBank`**: ระบบจัดการการโหลดและเก็บรักษา Asset (Sprites, Tiles, Backgrounds) เพื่อประสิทธิภาพ
-*   **`Chest`**: คลาสสำหรับจัดการ Logic การดึงไอเทมและแอนิเมชันของกล่อง
-*   **`Particle`**: ระบบอนุภาคที่ใช้สำหรับเอฟเฟกต์ภาพในเกม
-
-## 🛠️ วิธีการรันโปรเจกต์ (How to Run)
-
-### 1. ติดตั้งไลบรารีที่จำเป็น
-```bash
-pip install pygame
-```
-
-### 2. รันเกมหลัก
-```bash
-uv run main.py
-```
-
-### 3. รันโปรแกรมสร้างด่าน
-```bash
-uv run levels_editor.py
-```
-
-## 📐 คู่มือการใช้งาน Level Editor
-
-*   **สร้างเลเยอร์**: เลือกเลเยอร์ 0-2 สำหรับฉากหลัง (Background), 6 สำหรับพื้นดิน (Ground), และเลเยอร์อื่นๆ สำหรับวัตถุตกแต่ง
-*   **ตั้งค่า Entity**:
-    *   เลือกเครื่องมือ `Enemy` หรือ `Chest` แล้ววางลงในด่าน
-    *   คลิกที่ตัววัตถุเพื่อตั้งค่า (เช่น เลิกตั้งค่าไอเทมในกล่อง หรือปรับ HP ของศัตรูผ่าน Pop-up)
-*   **บันทึกด่าน**: ด่านจะถูกบันทึกเป็นไฟล์ `.json` ในโฟลเดอร์ `levels/` ซึ่งเกมจะโหลดขึ้นมาให้ตามลำดับ (level1.json, level2.json, ...)
+# 🎮 2D Platformer: OOP Final Project
+**รายวิชา:** 1145105-68 การเขียนโปรแกรมเชิงวัตถุ (Object-Oriented Programming)
+**ประเภทโครงงาน:** โครงงานเดี่ยว
 
 ---
-**พัฒนาโดย:** PITCHA
+
+## 👥 ข้อมูลสมาชิก (Team Members)
+*   **ชื่อทีม:** ฝันร้าย OOP
+*   **สมาชิก:** 1.นายพิชชากร คำพรม รหัสประจำตัว 68114540429
+
+---
+
+## 🚀 รายละเอียดโปรเจกต์ (Project Overview)
+โปรเจกต์นี้เป็นเกมแนว **2D Action Platformer** ที่พัฒนาด้วยภาษา Python โดยใช้ไลบรารี **Pygame-CE** โครงสร้างโปรแกรมถูกออกแบบโดยอิงตามหลักการ **OOP (Object-Oriented Programming)** และ **SOLID Principles** อย่างเคร่งครัด เพื่อให้โค้ดมีความยืดหยุ่น ยืดขยายได้ง่าย (Scalability) และง่ายต่อการบำรุงรักษา
+
+### ฟีเจอร์หลัก (Key Features)
+*   **Dynamic Combo Combat System**: ระบบการต่อสู้ 3 จังหวะ พร้อมแอนิเมชันที่ลื่นไหล
+*   **Advanced AI Wizard Entity**: ศัตรูที่มี State Machine (Roam, Chase, Return)
+*   **Warp Portal System**: ระบบเคลื่อนย้ายมวลสารระหว่างจุดในด่าน
+*   **Interactive Chest System**: การสุ่มไอเทม (Loot Table) พร้อมแอนิเมชันการเปิดแบบ Real-time
+*   **Multi-layered Parallax Background**: ฉากหลังหลายระดับที่ให้ความรู้สึกมีมิติ
+*   **Built-in Level Editor**: เครื่องมือสร้างด่านที่ใช้ระบบ Layer และรองรับการบันทึก/โหลดไฟล์ JSON
+
+---
+
+## 🏗️ การประยุกต์ใช้หลักการ OOP และ SOLID
+
+### 1. Object-Oriented Programming (OOP)
+*   **Encapsulation (การห่อหุ้ม):**
+    *   คลาส `Player`, `Enemy`, และ `Chest` เก็บสถานะ (HP, Position, State) และพฤติกรรม (Update, Draw) ไว้ภายในตัวเองอย่างเป็นสัดส่วน
+*   **Composition (การประกอบ):**
+    *   `GameMap` ประกอบด้วย Object จากคลาส `Chest` และ `Enemy` โดยจัดการผ่านการอ่านข้อมูลจาก JSON
+    *   `Player` ใช้งาน `SoundBank` และ `PlayerAnimationBank` ในการจัดการทรัพยากรเสียงและแอนิเมชัน
+*   **Polymorphism (การพหุสัณฐาน):**
+    *   การใช้ Duck Typing ในลูปหลักของเกม (Game Loop) ที่เรียกใช้เมธอด `.update()` และ `.draw()` ของอ็อบเจกต์ต่างประเภทกันได้อย่างอิสระ
+
+### 2. SOLID Principles
+*   **Single Responsibility Principle (SRP):**
+    *   `SoundBank`: รับผิดชอบเฉพาะการโหลดและจัดการไฟล์เสียง
+    *   `TileBank`: รับผิดชอบเฉพาะการจัดการ Asset รูปภาพและ Tileset
+    *   `Particle`: จัดการเฉพาะ Logic ของระบบอนุภาค (Visual Effects)
+*   **Open/Closed Principle (OCP):**
+    *   ระบบ `GameMap` ออกแบบมาให้รองรับการเพิ่ม Layer หรือประเภท Entity ใหม่ๆ ได้ผ่านไฟล์ JSON โดยไม่ต้องแก้ไข Code หลักของ Map Rendering
+*   **Liskov Substitution Principle (LSP):**
+    *   คลาส Entity ต่างๆ ถูกออกแบบให้มี Interface พื้นฐานที่สอดคล้องกัน ทำให้สามารถใช้งานแทนที่กันได้ในระบบจัดการ Entity
+
+### 3. Design Patterns
+*   **Resource Bank / Flyweight:** ใช้ `TileBank` และ `AnimationBank` เพื่อโหลดครั้งเดียวและแชร์การใช้งานอ็อบเจกต์ร่วมกัน (ลดการใช้ Memory)
+*   **State Pattern:** จัดการพฤติกรรมตัวละครผ่านตัวแปรสถานะ (idle, walk, jump, attack, death) ทำให้ Logic การเปลี่ยนแอนิเมชันไม่ซับซ้อน
+
+---
+
+## 🛠️ วิธีการติดตั้งและใช้งาน (Installation & Setup)
+
+### 📋 สิ่งที่ต้องมีก่อน (Prerequisites)
+*   Python 3.12 ขึ้นไป
+*   [uv](https://github.com/astral-sh/uv) (แนะนำสำหรับการรันโปรเจกต์) หรือ pip
+
+### ⚙️ ขั้นตอนการติดตั้ง
+1.  **Clone โปรเจกต์จาก Repository**
+    ```bash
+    git clone https://github.com/pitchakornofficial-prog/2DPlatformerGameByPITCHA.git
+    cd 2DPlatformerGameByPITCHA
+    ```
+2.  **ติดตั้ง Library ที่เกี่ยวข้อง**
+    ```bash
+    pip install -r requirements.txt
+    ```
+    *หรือหากใช้ uv:*
+    ```bash
+    uv sync
+    ```
+
+### 🎮 การเริ่มเล่นเกม
+*   **รันตัวเกมหลัก:**
+    ```bash
+    uv run main.py
+    ```
+*   **รันตัวสร้างด่าน (Level Editor):**
+    ```bash
+    uv run levels_editor.py
+    ```
+
+---
+
+## 🎮 การควบคุม (Controls)
+*   **W, A, S, D / Arrow Keys**: เคลื่อนที่และกระโดด
+*   **คลิกซ้าย (Mouse Left)**: โจมตีคอมโบ
+*   **คลิกขวา (Mouse Right)**: ป้องกัน (Defend)
+*   **E (Hold)**: มีปฏิสัมพันธ์กับวัตถุ (เปิดกล่อง / วาร์พ)
+*   **R**: เริ่มใหม่ (Restart) เมื่อพ่ายแพ้
+
+---
+**โครงงานนี้เป็นส่วนหนึ่งของวิชา OOP Final Project - 2026**
