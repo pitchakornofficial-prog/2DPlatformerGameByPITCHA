@@ -14,11 +14,18 @@ FPS         = 60
 
 GRAVITY     = 0.5
 JUMP_FORCE  = -8.5  
-MOVE_SPEED  = 2.2  
+MOVE_SPEED  = 1.55
 MAX_FALL    = 15.0
 
 # Zoom Factor
-ZOOM = 4.5 
+ZOOM = 4.5
+
+# ขนาดตัวละคร: hitbox (กว้าง, สูง) และความสูงที่ใช้สเกลภาพ (พิกเซลในโลก)
+PLAYER_HITBOX_W = 20
+PLAYER_HITBOX_H = 40
+PLAYER_DISPLAY_HEIGHT = 88   # ความสูงของภาพตัวละครบนจอ (ใช้คำนวณ scale จากสไปรต์ 96x84)
+# ชดเชยเท้า: สไปรต์อาจมีพื้นที่ว่างใต้เท้า (พิกเซลจากขอบล่างของเฟรมถึงเท้า) ปรับให้เท้าติดพื้น
+PLAYER_FEET_OFFSET = 23
 
 BASE_DIR   = Path(__file__).parent
 ASSETS_DIR = BASE_DIR / "assets"
@@ -71,6 +78,81 @@ def get_all_level_files() -> list:
     level_files = sorted(levels_dir.glob("level*.json"), 
                         key=lambda p: get_current_level_num(p))
     return level_files
+
+# ─────────────────────────── PLAYER ANIMATION BANK ──────────────
+
+class PlayerAnimationBank:
+    """โหลดสไปรต์จาก assets/plays/ ขนาดเฟรม 96x84 แถวเดียว"""
+    FRAME_WIDTH = 96
+    FRAME_HEIGHT = 84
+
+    def __init__(self):
+        self.animations = {}
+        self.load_player_animations()
+
+    def _load_sheet(self, filename, anim_name, is_looping, fps):
+        """โหลดภาพหนึ่งไฟล์ → แอนิเมชันหนึ่ง (แถวเดียว, เฟรมละ 96x84)"""
+        path = ASSETS_DIR / "plays" / filename
+        if not path.exists():
+            print(f"Warning: Player sprite not found: {path}")
+            return
+        try:
+            sheet = pygame.image.load(str(path)).convert_alpha()
+            w, h = sheet.get_size()
+            frame_count = max(1, w // self.FRAME_WIDTH)
+            frames = []
+            for col in range(frame_count):
+                try:
+                    frame = sheet.subsurface((
+                        col * self.FRAME_WIDTH, 0,
+                        self.FRAME_WIDTH, min(self.FRAME_HEIGHT, h)
+                    )).copy()
+                    frames.append(frame)
+                except Exception as e:
+                    print(f"Error extracting frame {col} from {anim_name}: {e}")
+            if frames:
+                self.animations[anim_name] = {
+                    "frames": frames,
+                    "looping": is_looping,
+                    "frame_count": len(frames),
+                    "fps": fps,
+                }
+        except Exception as e:
+            print(f"Error loading {filename}: {e}")
+
+    def load_player_animations(self):
+        plays_dir = ASSETS_DIR / "plays"
+        if not plays_dir.exists():
+            print(f"Warning: plays folder not found at {plays_dir}")
+            return
+        # IDLE, WALK, JUMP = loop; ATTACK 1/2/3, DEATH = ไม่ loop
+        self._load_sheet("IDLE.png", "idle", True, 6)
+        self._load_sheet("WALK.png", "walk", True, 10)
+        self._load_sheet("JUMP.png", "jump", False, 10)
+        self._load_sheet("ATTACK 1.png", "attack_1", False, 14)
+        self._load_sheet("ATTACK 2.png", "attack_2", False, 14)
+        self._load_sheet("ATTACK 3.png", "attack_3", False, 14)
+        self._load_sheet("DEFEND.png", "defend", True, 10)
+        self._load_sheet("DEATH.png", "death", False, 10)
+        print(f"✓ Loaded {len(self.animations)} player animations (96x84)")
+    
+    def get_animation(self, anim_name):
+        """Get animation data by name"""
+        return self.animations.get(anim_name, None)
+    
+    def get_frame(self, anim_name, frame_idx):
+        """Get specific frame from animation"""
+        anim = self.animations.get(anim_name)
+        if anim and 0 <= frame_idx < len(anim["frames"]):
+            frame = anim["frames"][frame_idx]
+            # Convert frame to proper surface for transformations
+            return frame.convert_alpha() if hasattr(frame, 'convert_alpha') else frame
+        return None
+    
+    def get_fps(self, anim_name):
+        """Get FPS for animation"""
+        anim = self.animations.get(anim_name)
+        return anim["fps"] if anim else 60
 
 # ─────────────────────────── TILE BANK ───────────────────────────
 
@@ -358,8 +440,15 @@ class Enemy:
         self.speed = 1.2
         self.frame = 0.0
         self.anim_speed = 8.0 # FPS
+        self.defeated = False  # Track if enemy has been defeated
+        self.hit_cooldown = 0.0 # Damage cooldown
         
     def update(self, dt, gmap: GameMap):
+        if self.defeated: return
+        
+        if self.hit_cooldown > 0:
+            self.hit_cooldown -= dt
+
         # Pacing logic
         self.frame = (self.frame + self.anim_speed * dt) % 10
         
@@ -400,44 +489,145 @@ class Enemy:
 # ─────────────────────────── PLAYER ──────────────────────────────
 
 class Player:
-    def __init__(self, x, y):
-        self.rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, 24, 30)
+    ATTACK_ANIMS = ("attack_1", "attack_2", "attack_3")
+
+    def __init__(self, x, y, pab: 'PlayerAnimationBank' = None):
+        self.rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, PLAYER_HITBOX_W, PLAYER_HITBOX_H)
         self.vx = 0.0
         self.vy = 0.0
         self.on_ground = False
-        self.jump_cd = 0 
+        self.jump_cd = 0
         self.fall_start_y = self.rect.y
-        self.stun_timer = 0 
-        
+        self.stun_timer = 0
+        self.direction = 1  # 1=right, -1=left (สไปรต์หันขวาในไฟล์)
+        self.pab = pab
+
+        # Animation state
+        self.current_anim = "idle"
+        self.anim_frame = 0.0
+        self.dead = False
+        self.defending = False
+        # Combo โจมตี: คลิกซ้ำเล่น ATTACK 1 → 2 → 3 ต่อกัน
+        self.attack_combo_next = None  # "attack_2" หรือ "attack_3" หรือ None
+        # กันการกระพริบ: แสดง jump เมื่ออยู่อากาศอย่างน้อย 2 เฟรมติดกัน
+        self._air_frames = 0
+
+    def request_attack(self):
+        """เรียกจาก main loop เมื่อผู้เล่นกดคลิกซ้าย"""
+        if self.dead or not self.pab:
+            return
+        if self.current_anim in self.ATTACK_ANIMS:
+            # อยู่ระหว่างโจมตี → กำหนดเล่นต่อด้วยชุดถัดไป
+            idx = self.ATTACK_ANIMS.index(self.current_anim)
+            next_idx = (idx + 1) % 3
+            self.attack_combo_next = self.ATTACK_ANIMS[next_idx]
+        else:
+            # ไม่ได้โจมตี → เริ่ม ATTACK 1
+            self.current_anim = "attack_1"
+            self.anim_frame = 0.0
+            self.attack_combo_next = None
+
+    def get_current_animation(self):
+        """เลือกแอนิเมชันตามสถานะ: ตาย → โจมตี → กระโดด → เดิน → ยืน
+        ใช้ _air_frames เพื่อกันการสลับ idle/jump หรือ walk/jump ซ้ำ ๆ จาก on_ground กระพริบ
+        """
+        if self.dead:
+            return "death"
+        if self.current_anim in self.ATTACK_ANIMS:
+            return self.current_anim
+        if self.defending:
+            return "defend"
+        # แสดง jump เฉพาะเมื่ออยู่อากาศจริง ๆ (อย่างน้อย 2 เฟรมติดกัน)
+        if self._air_frames >= 2:
+            return "jump"
+        if abs(self.vx) > 0:
+            return "walk"
+        return "idle"
+
     def update(self, gmap: GameMap, can_move=True):
         keys = pygame.key.get_pressed()
         self.vx = 0
-        if self.jump_cd > 0: self.jump_cd -= 1
-        if self.stun_timer > 0: self.stun_timer -= 1
-        
+        if self.jump_cd > 0:
+            self.jump_cd -= 1
+        if self.stun_timer > 0:
+            self.stun_timer -= 1
+
+        if self.dead:
+            # อัปเดตแอนิเมชันอย่างเดียว
+            if self.pab:
+                anim = self.pab.get_animation("death")
+                if anim:
+                    self.anim_frame += anim["fps"] / FPS
+                    self.anim_frame = min(self.anim_frame, anim["frame_count"] - 1)
+            return
+
+        mouse_buttons = pygame.mouse.get_pressed()
+        self.defending = mouse_buttons[2] # Right click to defend
+
         speed = MOVE_SPEED
-        if self.stun_timer > 0: speed *= 0.5
-            
-        if can_move:
-            if keys[pygame.K_a] or keys[pygame.K_LEFT]: self.vx = -speed
-            if keys[pygame.K_d] or keys[pygame.K_RIGHT]: self.vx = speed
-                
+        if self.stun_timer > 0:
+            speed *= 0.5
+
+        # ตอนโจมตีหรือป้องกันตัวละครจะเดินไม่ได้
+        is_acting = (self.current_anim in self.ATTACK_ANIMS) or self.defending
+        
+        if can_move and not is_acting:
+            if keys[pygame.K_a] or keys[pygame.K_LEFT]:
+                self.vx = -speed
+                self.direction = -1
+            if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
+                self.vx = speed
+                self.direction = 1
+
         self.rect.x += round(self.vx)
         self.collide(gmap, "horizontal")
-        
+
         if not self.on_ground and self.vy < 0:
             self.fall_start_y = self.rect.y
-        
+
         self.vy = min(self.vy + GRAVITY, MAX_FALL)
-        if can_move and (keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]):
+        if can_move and not is_acting and (keys[pygame.K_SPACE] or keys[pygame.K_w] or keys[pygame.K_UP]):
             if self.on_ground and self.jump_cd == 0:
                 self.vy = JUMP_FORCE
                 self.on_ground = False
-                self.jump_cd = 60 
+                self.jump_cd = 60
                 self.fall_start_y = self.rect.y
-            
+
         self.rect.y += round(self.vy)
         self.collide(gmap, "vertical")
+
+        # อัปเดตจำนวนเฟรมที่อยู่อากาศ (กันการกระพริบ idle/jump, walk/jump)
+        if self.on_ground:
+            self._air_frames = 0
+        else:
+            self._air_frames = min(self._air_frames + 1, 10)
+
+        # อัปเดตแอนิเมชัน
+        if self.pab:
+            anim_name = self.get_current_animation()
+            if anim_name != self.current_anim:
+                self.current_anim = anim_name
+                self.anim_frame = 0.0
+
+            anim = self.pab.get_animation(self.current_anim)
+            if anim:
+                fps = anim["fps"]
+                self.anim_frame += fps / FPS
+                if anim["looping"]:
+                    self.anim_frame = self.anim_frame % anim["frame_count"]
+                else:
+                    last_frame = anim["frame_count"] - 1
+                    if self.anim_frame >= last_frame:
+                        self.anim_frame = last_frame
+                        # จบแอนิเมชันโจมตี → เล่นชุดถัดไปหรือกลับ idle
+                        if self.current_anim in self.ATTACK_ANIMS:
+                            if self.attack_combo_next:
+                                self.current_anim = self.attack_combo_next
+                                self.anim_frame = 0.0
+                                self.attack_combo_next = None
+                            else:
+                                self.current_anim = "idle"
+                                self.anim_frame = 0.0
 
     def collide(self, gmap: GameMap, direction):
         if direction == "horizontal":
@@ -468,17 +658,31 @@ class Player:
                         return
 
     def draw(self, surf, cam_x, cam_y, zoom):
-        # Unified draw: round((world - cam) * zoom)
         sx = round((self.rect.x - cam_x) * zoom)
-        next_sx = round((self.rect.x + self.rect.width - cam_x) * zoom)
         sy = round((self.rect.y - cam_y) * zoom)
-        next_sy = round((self.rect.y + self.rect.height - cam_y) * zoom)
-        sw = next_sx - sx
-        sh = next_sy - sy
-        
-        col = (200, 100, 100) if self.stun_timer > 0 else (100, 200, 255)
-        pygame.draw.rect(surf, col, (sx, sy, sw, sh))
-        pygame.draw.rect(surf, (255, 255, 255), (sx, sy, sw, sh), max(1, round(1.5 * zoom)))
+
+        if not self.pab:
+            return
+        frame = self.pab.get_frame(self.current_anim, int(self.anim_frame))
+        if not frame:
+            return
+        frame_copy = frame.copy()
+        # สไปรต์หันขวาในไฟล์ → flip เฉพาะเมื่อหันซ้าย (direction = -1)
+        if self.direction < 0:
+            frame_copy = pygame.transform.flip(frame_copy, True, False)
+
+        frame_w, frame_h = frame_copy.get_size()
+        scale_factor = (PLAYER_DISPLAY_HEIGHT * zoom) / frame_h
+        scaled_w = int(frame_w * scale_factor)
+        scaled_h = int(frame_h * scale_factor)
+        if scaled_w <= 0 or scaled_h <= 0:
+            return
+        scaled_frame = pygame.transform.scale(frame_copy, (scaled_w, scaled_h))
+        offset_x = (round(self.rect.width * zoom) - scaled_w) // 2
+        # ให้เท้าติดพื้น: เลื่อนภาพลงตาม PLAYER_FEET_OFFSET (พิกเซลในเฟรมต้นทาง)
+        feet_shift = int(PLAYER_FEET_OFFSET * scale_factor)
+        offset_y = round(self.rect.height * zoom) - scaled_h + feet_shift
+        surf.blit(scaled_frame, (sx + offset_x, sy + offset_y))
 
 # ─────────────────────────── MAIN GAME ───────────────────────────
 
@@ -506,8 +710,9 @@ def main():
         level_data = json.load(f)
     
     tb = TileBank()
+    pab = PlayerAnimationBank()  # Load player animations
     gmap = GameMap(level_data, tb)
-    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
     
     # World-Space Camera initialization
     camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
@@ -515,14 +720,25 @@ def main():
     
     exit_hold_t = 0.0
     game_over = False
+    death_timer = 0.0  # หลังผู้เล่นตาย ให้เล่นแอนิเมชัน DEATH ก่อนแล้วค่อย game over
+
+    # Score tracking
+    cumulative_score = 0  # Total score across all levels
+    level_score = 0       # Score for current level
+    collected_chests = {} # Track collected chests to avoid duplicate scoring
+    display_cumulative_score = 0  # Animated score display
+    in_shop = False  # Shop screen state
     
     running = True
     while running:
         dt = clock.tick(FPS) / 1000.0
         
         for event in pygame.event.get():
-            if event.type == pygame.QUIT: running = False
-                
+            if event.type == pygame.QUIT:
+                running = False
+            if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                player.request_attack()
+
         if not game_over:
             # Check interaction
             keys = pygame.key.get_pressed()
@@ -555,6 +771,12 @@ def main():
                 elif active_chest.state == "awarding":
                     active_chest.state = "open"
                     active_chest.hold_timer = 0
+                    # Award points for collecting chest item
+                    chest_id = f"{active_chest.world_x},{active_chest.world_y}"
+                    if chest_id not in collected_chests:
+                        collected_chests[chest_id] = True
+                        level_score += 100
+                        cumulative_score += 100
             # Interaction Circle (for Exits or Chests)
             ex, ey = gmap.exit_pos
             dist_to_exit = math.hypot(player.rect.centerx - (ex * TILE_SIZE + 32), player.rect.centery - (ey * TILE_SIZE + 32))
@@ -577,6 +799,35 @@ def main():
 
             can_move = not ((active_chest and active_chest.state == "opening") or interacting_with_exit)
             player.update(gmap, can_move)
+
+            # ตายเมื่อตกออกจากแผนที่
+            if player.rect.y > gmap.height * TILE_SIZE:
+                player.dead = True
+
+            # หลังตาย เล่นแอนิเมชัน DEATH แล้วค่อยแสดง game over
+            if player.dead:
+                death_timer += dt
+                if death_timer >= 2.0:
+                    game_over = True
+
+            # Melee Combat System
+            if player.current_anim in player.ATTACK_ANIMS:
+                # Define attack hitbox in front of player
+                if player.direction > 0:
+                    attack_rect = pygame.Rect(player.rect.right, player.rect.top, 25, player.rect.height)
+                else:
+                    attack_rect = pygame.Rect(player.rect.left - 25, player.rect.top, 25, player.rect.height)
+                
+                for enemy in gmap.enemies:
+                    if not enemy.defeated and enemy.hit_cooldown <= 0:
+                        if attack_rect.colliderect(enemy.rect):
+                            enemy.hp -= 20
+                            enemy.hit_cooldown = 1.0 # 1s cooldown per hit
+                            if enemy.hp <= 0:
+                                enemy.defeated = True
+                                level_score += 100
+                                cumulative_score += 100
+
             
             # Update Enemies
             for enemy in gmap.enemies:
@@ -597,6 +848,14 @@ def main():
         screen.fill((20, 20, 25))
         gmap.draw(screen, camera_x, camera_y, ZOOM, font_sm)
         
+        # Animate displayed score (follow cumulative_score)
+        if display_cumulative_score < cumulative_score:
+            display_cumulative_score += max(1, (cumulative_score - display_cumulative_score) // 10)
+            if display_cumulative_score > cumulative_score:
+                display_cumulative_score = cumulative_score
+        elif display_cumulative_score > cumulative_score:
+            display_cumulative_score = cumulative_score
+        
         # Draw entities with z-order priority (chests -> enemies -> player)
         # Format: (z_order, y_coord, entity_type, entity)
         entities = []
@@ -605,9 +864,10 @@ def main():
         for chest in gmap.chests:
             entities.append((0, chest.world_y, "chest", chest))
         
-        # Enemies (z=1, middle)
+        # Enemies (z=1, middle) - only draw if not defeated
         for enemy in gmap.enemies:
-            entities.append((1, enemy.world_y, "enemy", enemy))
+            if not enemy.defeated:
+                entities.append((1, enemy.world_y, "enemy", enemy))
         
         # Player (z=2, front)
         entities.append((2, player.rect.centery, "player", player))
@@ -623,6 +883,16 @@ def main():
                 entity.draw(screen, camera_x, camera_y, ZOOM)
             elif entity_type == "chest":
                 entity.draw(screen, camera_x, camera_y, ZOOM, True, font_sm)
+        
+        # Draw large score in top-left corner
+        score_text = font_lg.render(f"{display_cumulative_score}", True, (255, 255, 100))
+        screen.blit(score_text, (45, 15))
+        
+        # Draw MAP indicator in top-right corner
+        current_map_num = current_level_idx + 1
+        total_maps = len(all_levels)
+        map_text = font_md.render(f"MAP {current_map_num}/{total_maps}", True, (255, 255, 100))
+        screen.blit(map_text, (SCREEN_W - map_text.get_width() - 15, 15))
         
         # Interaction Prompts (for Exits or Chests)
         if not game_over:
@@ -647,28 +917,53 @@ def main():
                     draw_text(screen, font_md, txt, cx_x - tw//2, cx_y - round(8*ZOOM), (200, 255, 100))
         
         # Game Over Screen
-        if game_over:
+        if game_over and not in_shop:
             overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 230))
             screen.blit(overlay, (0, 0))
             
-            msg = font_lg.render("จบเกมแล้ว", True, (255, 255, 255))
+            # Show different message based on whether it's the last level
+            if is_last_level:
+                msg_text = "จบเกมแล้ว"
+            else:
+                current_level_num = current_level_idx + 1
+                msg_text = f"จบแผนที่ {current_level_num}"
+            
+            msg = font_lg.render(msg_text, True, (255, 255, 255))
             screen.blit(msg, (SCREEN_W//2 - msg.get_width()//2, SCREEN_H//2 - msg.get_height()//2))
+            
+            level_score_display = level_score if level_score >= 0 else 0
+            level_info = font_md.render(f"Level Score: {level_score_display}", True, (255, 255, 100))
+            screen.blit(level_info, (SCREEN_W//2 - level_info.get_width()//2, SCREEN_H//2 + 50))
             
             if is_last_level:
                 # Last level reached - show game end message
                 next_msg = font_md.render("ยินดีด้วย! คุณชนะเกมแล้ว", True, (255, 255, 100))
-                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 50))
-                restart_txt = font_md.render("Press R to Restart Level / Enter to New Game", True, (200, 200, 200))
-                screen.blit(restart_txt, (SCREEN_W//2 - restart_txt.get_width()//2, SCREEN_H//2 + 100))
+                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 100))
+                final_score = font_md.render(f"Final Score: {cumulative_score}", True, (255, 255, 100))
+                screen.blit(final_score, (SCREEN_W//2 - final_score.get_width()//2, SCREEN_H//2 + 150))
+                
+                # Draw buttons: R (left), Enter (right) - NO SHOP for level 5
+                button_y = SCREEN_H//2 + 220
+                restart_txt = font_md.render("[R] Restart", True, (200, 200, 200))
+                next_txt = font_md.render("[ENTER] New Game", True, (100, 255, 100))
+                
+                screen.blit(restart_txt, (50, SCREEN_H - 60))
+                screen.blit(next_txt, (SCREEN_W - next_txt.get_width() - 50, SCREEN_H - 60))
                 
                 # R = Restart current level5
                 if pygame.key.get_pressed()[pygame.K_r]:
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
-                    for c in gmap.chests: c.reset()
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    for c in gmap.chests:
+                        c.reset()
+                    for e in gmap.enemies:
+                        e.defeated = False
+                    collected_chests.clear()
+                    level_score = 0
                     exit_hold_t = 0
+                    death_timer = 0.0
                     game_over = False
-                
+
                 # Enter = New Game (go back to level1)
                 if pygame.key.get_pressed()[pygame.K_RETURN]:
                     current_level_idx = 0
@@ -679,17 +974,30 @@ def main():
                         level_data = json.load(f)
                     
                     gmap = GameMap(level_data, tb)
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
                     camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                     camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                    collected_chests.clear()
+                    cumulative_score = 0
+                    level_score = 0
+                    display_cumulative_score = 0
                     exit_hold_t = 0
+                    death_timer = 0.0
                     game_over = False
             else:
                 # More levels available
                 next_msg = font_md.render("Press ENTER for Next Level", True, (100, 255, 100))
-                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 50))
-                restart_txt = font_md.render("Press R to Restart", True, (200, 200, 200))
-                screen.blit(restart_txt, (SCREEN_W//2 - restart_txt.get_width()//2, SCREEN_H//2 + 100))
+                screen.blit(next_msg, (SCREEN_W//2 - next_msg.get_width()//2, SCREEN_H//2 + 100))
+                
+                # Draw buttons: R (left), T (shop/middle), Enter (right)
+                button_y = SCREEN_H//2 + 170
+                restart_txt = font_md.render("[R] Restart", True, (200, 200, 200))
+                shop_txt = font_md.render("[T] Shop", True, (200, 200, 200))
+                next_txt = font_md.render("[ENTER] Next", True, (100, 255, 100))
+                
+                screen.blit(restart_txt, (SCREEN_W//2 - 300 - restart_txt.get_width()//2, button_y))
+                screen.blit(shop_txt, (SCREEN_W//2 - shop_txt.get_width()//2, button_y))
+                screen.blit(next_txt, (SCREEN_W//2 + 300 - next_txt.get_width()//2, button_y))
                 
                 if pygame.key.get_pressed()[pygame.K_RETURN]:
                     # Load next level
@@ -702,17 +1010,104 @@ def main():
                             level_data = json.load(f)
                         
                         gmap = GameMap(level_data, tb)
-                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
+                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
                         camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                         camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                        collected_chests.clear()
+                        level_score = 0
                         exit_hold_t = 0
+                        death_timer = 0.0
                         game_over = False
+
+                # T = Enter shop
+                if pygame.key.get_pressed()[pygame.K_t]:
+                    in_shop = True
                 
                 if pygame.key.get_pressed()[pygame.K_r]:
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1])
-                    for c in gmap.chests: c.reset()
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    for c in gmap.chests: 
+                        c.reset()
+                    for e in gmap.enemies:
+                        e.defeated = False
+                    collected_chests.clear()
+                    level_score = 0
                     exit_hold_t = 0
+                    death_timer = 0.0
                     game_over = False
+
+        # Shop Screen
+        if in_shop:
+            shop_overlay = pygame.Surface((SCREEN_W, SCREEN_H), pygame.SRCALPHA)
+            shop_overlay.fill((0, 0, 0, 250))
+            screen.blit(shop_overlay, (0, 0))
+            
+            shop_title = font_lg.render("SHOP", True, (255, 255, 100))
+            screen.blit(shop_title, (SCREEN_W//2 - shop_title.get_width()//2, 50))
+            
+            shop_info = font_md.render("(Empty Shop)", True, (200, 200, 200))
+            screen.blit(shop_info, (SCREEN_W//2 - shop_info.get_width()//2, SCREEN_H//2))
+            
+            # Bottom left: R button (Restart)
+            restart_txt = font_md.render("[R] Back", True, (200, 100, 100))
+            screen.blit(restart_txt, (30, SCREEN_H - 60))
+            
+            # Bottom right: Enter button (Continue) with border and progress bar inside
+            continue_txt = font_md.render("[ENTER] Continue", True, (100, 200, 100))
+            padding = 10
+            continue_x = SCREEN_W - continue_txt.get_width() - 30 - padding * 2
+            continue_y = SCREEN_H - 60
+            
+            # Get progress for drawing
+            progress = min(exit_hold_t / 3.0, 1.0) if pygame.key.get_pressed()[pygame.K_RETURN] else 0
+            
+            # Draw border around the area (larger to contain progress bar)
+            border_rect = pygame.Rect(continue_x - padding, continue_y - padding, 
+                                     continue_txt.get_width() + padding * 2, continue_txt.get_height() + padding * 2)
+            
+            # Draw background bar inside the border
+            pygame.draw.rect(screen, (50, 50, 50), border_rect)  # Dark background
+            
+            # Draw progress bar (white, fills from left to right inside the border)
+            filled_width = int(border_rect.width * progress)
+            pygame.draw.rect(screen, (255, 255, 255), (border_rect.x, border_rect.y, filled_width, border_rect.height))
+            
+            # Draw border around the box
+            pygame.draw.rect(screen, (100, 200, 100), border_rect, 2)  # Green border
+            
+            # Draw the continue text on top of the progress bar
+            screen.blit(continue_txt, (continue_x, continue_y))
+            
+            # Handle ENTER key hold
+            if pygame.key.get_pressed()[pygame.K_RETURN]:
+                exit_hold_t += dt
+                
+                if exit_hold_t >= 3.0:
+                    in_shop = False
+                    # Load next level
+                    current_level_idx += 1
+                    if current_level_idx < len(all_levels):
+                        current_level_path = all_levels[current_level_idx]
+                        is_last_level = (current_level_idx == len(all_levels) - 1)
+                        
+                        with open(current_level_path, "r", encoding="utf-8") as f:
+                            level_data = json.load(f)
+                        
+                        gmap = GameMap(level_data, tb)
+                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                        camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                        camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                        collected_chests.clear()
+                        level_score = 0
+                        exit_hold_t = 0
+                        death_timer = 0.0
+                        game_over = False
+            else:
+                exit_hold_t = 0
+            
+            # Back to game over screen
+            if pygame.key.get_pressed()[pygame.K_r]:
+                in_shop = False
+                exit_hold_t = 0
 
         pygame.display.flip()
     pygame.quit()
