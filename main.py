@@ -442,14 +442,65 @@ class Enemy:
         self.anim_speed = 8.0 # FPS
         self.defeated = False  # Track if enemy has been defeated
         self.hit_cooldown = 0.0 # Damage cooldown
+
+        # AI States
+        self.spawn_x = self.world_x
+        self.state = "roam" # roam, chase, return
+        self.away_timer = 0.0
+        self.detection_range = TILE_SIZE * 2
+        self.roam_range = TILE_SIZE * 2
+        self.away_timeout = 5.0
         
-    def update(self, dt, gmap: GameMap):
+    def update(self, dt, gmap: GameMap, player):
         if self.defeated: return
         
         if self.hit_cooldown > 0:
             self.hit_cooldown -= dt
 
-        # Pacing logic
+        # Distance to player
+        dx = player.rect.centerx - self.rect.centerx
+        dist = abs(dx)
+
+        # AI State Machine
+        if self.state == "roam":
+            # Detection
+            if dist < self.detection_range:
+                self.state = "chase"
+            else:
+                # Roaming logic (stay within ±roam_range of spawn_x)
+                if self.world_x > self.spawn_x + self.roam_range:
+                    self.dir = -1
+                elif self.world_x < self.spawn_x - self.roam_range:
+                    self.dir = 1
+                    
+        elif self.state == "chase":
+            # Move towards player
+            self.dir = 1 if dx > 0 else -1
+            
+            # Check if away from spawn
+            if abs(self.world_x - self.spawn_x) > self.roam_range:
+                self.away_timer += dt
+            else:
+                self.away_timer = 0.0
+                
+            # Transition to return
+            if self.away_timer >= self.away_timeout:
+                self.state = "return"
+                self.away_timer = 0.0
+            
+            # Lose interest if player is too far? (The prompt didn't specify, but usually good)
+            # if dist > self.detection_range * 1.5: self.state = "return"
+
+        elif self.state == "return":
+            # Move towards spawn_x
+            dist_to_spawn = self.spawn_x - self.world_x
+            if abs(dist_to_spawn) < 5:
+                self.state = "roam"
+                self.away_timer = 0.0
+            else:
+                self.dir = 1 if dist_to_spawn > 0 else -1
+
+        # Pacing logic (Common to all states for animation)
         self.frame = (self.frame + self.anim_speed * dt) % 10
         
         move_dist = self.speed * self.dir
@@ -458,18 +509,22 @@ class Enemy:
         # Wall Collision & Edge detection
         grid_y = int((self.rect.bottom - 1) // TILE_SIZE)
         
-        # Wall ahead? (Check leading edge)
+        # Wall ahead?
         check_x = next_x + (64 if self.dir > 0 else 0)
         hit_wall = gmap.is_solid(int(check_x // TILE_SIZE), grid_y) or \
                    gmap.is_solid(int(check_x // TILE_SIZE), grid_y - 1)
         
-        # Floor ahead? (Check bottom middle or leading edge)
-        # Using a point slightly ahead of the hitbox center to detect edges
+        # Floor ahead?
         floor_check_x = next_x + (48 if self.dir > 0 else 16)
         no_floor = not gmap.is_solid(int(floor_check_x // TILE_SIZE), grid_y + 1)
         
         if hit_wall or no_floor:
-            self.dir *= -1
+            # If in roam, just flip. If chasing/returning, we might be stuck.
+            if self.state == "roam":
+                self.dir *= -1
+            elif self.state == "chase":
+                # If chased into a wall/edge, just stop or return
+                pass # Already can't move further if hit_wall/no_floor
         else:
             self.rect.x += move_dist
             self.world_x = self.rect.x
@@ -831,7 +886,7 @@ def main():
             
             # Update Enemies
             for enemy in gmap.enemies:
-                enemy.update(dt, gmap)
+                enemy.update(dt, gmap, player)
             
             # Camera Smoothing (Lerp) in World Space
             target_cam_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
