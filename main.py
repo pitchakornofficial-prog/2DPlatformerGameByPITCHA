@@ -79,6 +79,39 @@ def get_all_level_files() -> list:
                         key=lambda p: get_current_level_num(p))
     return level_files
 
+# ─────────────────────────── SOUND BANK ──────────────────────────
+class SoundBank:
+    def __init__(self):
+        self.sounds = {}
+        self.load_sounds()
+
+    def load_sounds(self):
+        effects_dir = ASSETS_DIR / "effects"
+        sound_files = {
+            "game_over": "calango_fx_official-game-over-401236.mp3",
+            "hit": "u_nfmiq7z9as-bullethit-449809.mp3",
+            "attack": "freesound_crunchpixstudio-rpg-sword-attack-combo19-388939.mp3",
+            "level_clear": "freesound_community-game-start-6104.mp3",
+            "warp": "gargamel10-teleport-game-sound-effect-379236.mp3",
+            "chest": "floraphonic-wooden-trunk-latch-3-183946.mp3",
+            "block": "freesound_community-wood-block-105066.mp3"
+        }
+        for key, filename in sound_files.items():
+            path = effects_dir / filename
+            if path.exists():
+                try:
+                    self.sounds[key] = pygame.mixer.Sound(str(path))
+                except Exception as e:
+                    print(f"Error loading sound {filename}: {e}")
+            else:
+                print(f"Warning: Sound file not found: {path}")
+
+    def play(self, key, volume=0.5):
+        if key in self.sounds:
+            sound = self.sounds[key]
+            sound.set_volume(volume)
+            sound.play()
+
 # ─────────────────────────── PLAYER ANIMATION BANK ──────────────
 
 class PlayerAnimationBank:
@@ -257,7 +290,12 @@ class Chest:
         self.world_x = x * TILE_SIZE
         self.world_y = y * TILE_SIZE
         self.type = ctype
-        self.items_pool = items.split(",") if items else ["อาหาร", "ยา", "กุญแจ", "น้ำ", "ผลไม้"]
+        if isinstance(items, list):
+            self.items_pool = items
+        elif isinstance(items, str) and items:
+            self.items_pool = items.split(",")
+        else:
+            self.items_pool = ["อาหาร", "ยา", "กุญแจ", "น้ำ", "ผลไม้"]
         self.loot_reveal = ""
         self.hud_scale = 0.0
         self.hold_timer = 0.0
@@ -370,8 +408,8 @@ class GameMap:
         self.tb = tb
         
         entities = data.get("entities", {})
-        self.player_spawn = entities.get("player_spawn", [2, 2])
-        self.exit_pos = entities.get("exit", [self.width - 2, self.height - 2])
+        self.player_spawn = entities.get("player_spawn") or [2, 2]
+        self.exit_pos = entities.get("exit") or None
         
         self.collision_data = self.layers.get("6", {})
         
@@ -614,8 +652,9 @@ class Enemy:
 class Player:
     ATTACK_ANIMS = ("attack_1", "attack_2", "attack_3")
 
-    def __init__(self, x, y, pab: 'PlayerAnimationBank' = None):
+    def __init__(self, x, y, pab: 'PlayerAnimationBank' = None, sb: 'SoundBank' = None):
         self.rect = pygame.Rect(x * TILE_SIZE, y * TILE_SIZE, PLAYER_HITBOX_W, PLAYER_HITBOX_H)
+        self.sb = sb
         self.vx = 0.0
         self.vy = 0.0
         self.on_ground = False
@@ -659,6 +698,7 @@ class Player:
             self.current_anim = "attack_1"
             self.anim_frame = 0.0
             self.attack_combo_next = None
+            if self.sb: self.sb.play("attack")
 
     def get_current_animation(self):
         """เลือกแอนิเมชันตามสถานะ: ตาย → โจมตี → กระโดด → เดิน → ยืน
@@ -768,6 +808,7 @@ class Player:
                                 self.current_anim = self.attack_combo_next
                                 self.anim_frame = 0.0
                                 self.attack_combo_next = None
+                                if self.sb: self.sb.play("attack")
                             else:
                                 self.current_anim = "idle"
                                 self.anim_frame = 0.0
@@ -845,6 +886,14 @@ class Player:
 
 def main():
     pygame.init()
+    
+    # Load and play background music on loop
+    music_path = ASSETS_DIR / "music" / "jakob_welik-level-one-8-bit-pixel-warriors-chapter-one-415685.mp3"
+    if music_path.exists():
+        pygame.mixer.music.load(str(music_path))
+        pygame.mixer.music.set_volume(0.4)
+        pygame.mixer.music.play(-1)
+    
     screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
     pygame.display.set_caption("2D Platformer by PITCHA")
     clock = pygame.time.Clock()
@@ -868,8 +917,9 @@ def main():
     
     tb = TileBank()
     pab = PlayerAnimationBank()  # Load player animations
+    sb = SoundBank()             # Load sound effects
     gmap = GameMap(level_data, tb)
-    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
     
     # World-Space Camera initialization
     camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
@@ -904,7 +954,7 @@ def main():
                     with open(current_level_path, "r", encoding="utf-8") as f:
                         level_data = json.load(f)
                     gmap = GameMap(level_data, tb)
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
                     camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                     camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
                     game_over = False
@@ -936,6 +986,7 @@ def main():
                 if active_chest.state == "closed":
                     active_chest.state = "opening"
                     active_chest.hold_timer = 0
+                    sb.play("chest")
                 
                 if active_chest.state == "opening":
                     active_chest.hold_timer += dt
@@ -951,17 +1002,21 @@ def main():
                         level_score += 100
                         cumulative_score += 100
             # Interaction Circle (for Exits or Chests)
-            ex, ey = gmap.exit_pos
-            dist_to_exit = math.hypot(player.rect.centerx - (ex * TILE_SIZE + 32), player.rect.centery - (ey * TILE_SIZE + 32))
+            dist_to_exit = 999999
             interacting_with_exit = False
-            if dist_to_exit < 80:
-                if keys[pygame.K_e] and not interacting_with_chest:
-                    exit_hold_t += dt
-                    interacting_with_exit = True
-                    if exit_hold_t >= 5.0:
-                        game_over = True
-                else:
-                    exit_hold_t = 0
+            if gmap.exit_pos:
+                ex, ey = gmap.exit_pos
+                dist_to_exit = math.hypot(player.rect.centerx - (ex * TILE_SIZE + 32), player.rect.centery - (ey * TILE_SIZE + 32))
+                if dist_to_exit < 80:
+                    if keys[pygame.K_e] and not interacting_with_chest:
+                        exit_hold_t += dt
+                        interacting_with_exit = True
+                        if exit_hold_t >= 5.0:
+                            game_over = True
+                            if not player.dead:
+                                sb.play("level_clear")
+                    else:
+                        exit_hold_t = 0
             
             
             if active_chest and not keys[pygame.K_e]:
@@ -997,6 +1052,7 @@ def main():
                             player.rect.x = dgx * TILE_SIZE
                             player.rect.y = dgy * TILE_SIZE
                             player.warp_timer = 0.0
+                            sb.play("warp")
                             # Snap camera immediately after warp
                             camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                             camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
@@ -1019,6 +1075,8 @@ def main():
 
             # หลังตาย เล่นแอนิเมชัน DEATH จนจบแล้วค่อยแสดง game over
             if player.dead and player.death_anim_finished:
+                if not game_over:
+                    sb.play("game_over")
                 game_over = True
 
             # Melee Combat System
@@ -1033,6 +1091,7 @@ def main():
                     if not enemy.defeated and enemy.hit_cooldown <= 0:
                         if attack_rect.colliderect(enemy.rect):
                             enemy.hp -= 20
+                            sb.play("hit")
                             enemy.hit_cooldown = 1.0 # 1s cooldown per hit
                             enemy.hit_flash_timer = 0.2
                             if enemy.hp <= 0:
@@ -1047,7 +1106,10 @@ def main():
                         # Damage player if not defending
                         if not player.defending:
                             player.hp -= 20
+                            sb.play("hit")
                             player.hit_flash_timer = 0.2
+                        else:
+                            sb.play("block")
                         
                         # Enemy returns to spawn after hitting player (even if blocked)
                         enemy.state = "return"
@@ -1136,10 +1198,11 @@ def main():
         
         # Interaction Prompts (for Exits or Chests)
         if not game_over:
-            if dist_to_exit < 80:
+            if gmap.exit_pos and dist_to_exit < 80:
                 if exit_hold_t <= 0:
                     txt = "Hold [E] to Exit"
                     tw, _ = font_md.size(txt)
+                    ex, ey = gmap.exit_pos
                     ex_x = round(((ex + 0.5) * TILE_SIZE - camera_x) * ZOOM)
                     ex_y = round((ey * TILE_SIZE - camera_y) * ZOOM)
                     draw_text(screen, font_md, txt, ex_x - tw//2, ex_y - round(40*ZOOM), (255, 255, 100))
@@ -1215,7 +1278,7 @@ def main():
                 
                 # R = Restart current level5
                 if pygame.key.get_pressed()[pygame.K_r]:
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
                     for c in gmap.chests:
                         c.reset()
                     for e in gmap.enemies:
@@ -1236,7 +1299,7 @@ def main():
                         level_data = json.load(f)
                     
                     gmap = GameMap(level_data, tb)
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
                     camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                     camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
                     collected_chests.clear()
@@ -1272,7 +1335,7 @@ def main():
                             level_data = json.load(f)
                         
                         gmap = GameMap(level_data, tb)
-                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                        player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
                         camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
                         camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
                         collected_chests.clear()
@@ -1286,7 +1349,7 @@ def main():
                     in_shop = True
                 
                 if pygame.key.get_pressed()[pygame.K_r]:
-                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab)
+                    player = Player(gmap.player_spawn[0], gmap.player_spawn[1], pab, sb)
                     for c in gmap.chests: 
                         c.reset()
                     for e in gmap.enemies:

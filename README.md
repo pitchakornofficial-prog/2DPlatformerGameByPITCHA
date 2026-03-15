@@ -42,12 +42,12 @@ pip install pygame
 
 ### 2. รันเกมหลัก
 ```bash
-python main.py
+uv run main.py
 ```
 
 ### 3. รันโปรแกรมสร้างด่าน
 ```bash
-python levels_editor.py
+uv run levels_editor.py
 ```
 
 ## 📐 คู่มือการใช้งาน Level Editor
