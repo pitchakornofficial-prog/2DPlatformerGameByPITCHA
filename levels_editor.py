@@ -310,9 +310,11 @@ class UIPanel:
             
         start_y += 75
         # Entity Spawns
-        entities = ["Player", "Enemy", "Exit"]
+        entities = ["Player", "Enemy", "Exit", "Warp", "Label"]
         for i, t in enumerate(entities):
-            btn = UIButton(start_x + i * 110, start_y, 105, 30, t, lambda t=t: self.set_tool(t))
+            btn_x = start_x + (i % 3) * 110
+            btn_y = start_y + (i // 3) * 35
+            btn = UIButton(btn_x, btn_y, 105, 30, t, lambda t=t: self.set_tool(t))
             if t == self.editor.current_tool: btn.active = True
             self.buttons.append(btn)
 
@@ -369,8 +371,12 @@ class UIPanel:
                     'map_height': data.get('map_height', 10),
                     'layers': {int(k): v for k, v in data.get('layers', {}).items()},
                     'bg_layers': {int(k): v for k, v in data.get('bg_layers', {}).items()} if 'bg_layers' in data else {i: {'image': None, 'offset_x': 0, 'offset_y': 0, 'tile_w': 64, 'tile_h': 64, 'rot': 0} for i in range(3)},
-                    'entities': data.get('entities', {'player_spawn': None, 'exit': None, 'enemies': {}, 'chests': {}})
+                    'entities': data.get('entities', {'player_spawn': None, 'exit': None, 'enemies': {}, 'chests': {}, 'portals': {}, 'labels': {}})
                 }
+                # Ensure missing keys in entities exist
+                ent = formatted['entities']
+                for k in ['portals', 'labels', 'enemies', 'chests']:
+                    if k not in ent: ent[k] = {}
                 self.editor.state = formatted
                 self.editor.current_file = filepath
                 self.editor.action_history.clear()
@@ -587,7 +593,9 @@ class LevelEditor:
                 'player_spawn': None,
                 'exit': None,
                 'enemies': {},
-                'chests': {}
+                'chests': {},
+                'portals': {},
+                'labels': {}
             }
         }
         
@@ -696,6 +704,32 @@ class LevelEditor:
                 except: chest_data['ammo'] = 3
                 self.save_history()
 
+        if etype == 'warp':
+            root = _get_tk_root()
+            pid = simpledialog.askinteger("Portal ID", "New ID:", 
+                                         initialvalue=self.state['entities']['portals'][pos_key].get('id', 0),
+                                         parent=root)
+            if pid is not None:
+                # Check if this ID is already used twice elsewhere
+                count = 0
+                for p_key, pdata in self.state['entities']['portals'].items():
+                    if p_key != pos_key and pdata.get('id') == pid: count += 1
+                
+                if count >= 2:
+                    tk.messagebox.showwarning("Warning", f"ID {pid} is already used twice!", parent=root)
+                else:
+                    self.state['entities']['portals'][pos_key]['id'] = pid
+                    self.save_history()
+
+        if etype == 'label':
+            root = _get_tk_root()
+            text = simpledialog.askstring("Label Text", "New Text:",
+                                         initialvalue=self.state['entities']['labels'][pos_key].get('text', ""),
+                                         parent=root)
+            if text:
+                self.state['entities']['labels'][pos_key]['text'] = text
+                self.save_history()
+
     def process_canvas_click(self, grid_pos, button):
         gx, gy = grid_pos
         if gx < 0 or gx >= self.state['map_width'] or gy < 0 or gy >= self.state['map_height']: return
@@ -731,6 +765,12 @@ class LevelEditor:
                     changed = True
                 if self.state['entities']['exit'] == [gx, gy]:
                     self.state['entities']['exit'] = None
+                    changed = True
+                if pos_key in self.state['entities'].get('portals', {}):
+                    del self.state['entities']['portals'][pos_key]
+                    changed = True
+                if pos_key in self.state['entities'].get('labels', {}):
+                    del self.state['entities']['labels'][pos_key]
                     changed = True
 
         elif self.current_tool == "Rotate":
@@ -770,6 +810,34 @@ class LevelEditor:
                 self.configure_entity('enemy', pos_key)
             elif pos_key in self.state['entities']['chests']:
                 self.configure_entity('chest', pos_key)
+            elif pos_key in self.state['entities']['portals']:
+                self.configure_entity('warp', pos_key)
+            elif pos_key in self.state['entities']['labels']:
+                self.configure_entity('label', pos_key)
+
+        elif self.current_tool == "Warp" and button == 1:
+            if pos_key not in self.state['entities']['portals']:
+                root = _get_tk_root()
+                pid = simpledialog.askinteger("Portal ID", "ID (Integer):", parent=root)
+                if pid is not None:
+                    # Check how many times this ID is used
+                    count = 0
+                    for pdata in self.state['entities']['portals'].values():
+                        if pdata.get('id') == pid: count += 1
+                    
+                    if count >= 2:
+                        tk.messagebox.showwarning("Warning", f"ID {pid} is already used twice!", parent=root)
+                    else:
+                        self.state['entities']['portals'][pos_key] = {'id': pid}
+                        changed = True
+
+        elif self.current_tool == "Label" and button == 1:
+            if pos_key not in self.state['entities']['labels']:
+                root = _get_tk_root()
+                text = simpledialog.askstring("Label Text", "Enter Label Text:", parent=root)
+                if text:
+                    self.state['entities']['labels'][pos_key] = {'text': text}
+                    changed = True
 
         if changed:
             self.save_history()
@@ -902,8 +970,8 @@ class LevelEditor:
                     surface.blit(scaled_img, (screen_x, screen_y))
 
         # Draw Entities
-        for e_type in ['chests', 'enemies', 'player_spawn', 'exit']:
-            data = self.state['entities'][e_type]
+        for e_type in ['chests', 'enemies', 'player_spawn', 'exit', 'portals', 'labels']:
+            data = self.state['entities'].get(e_type)
             if not data: continue
                         # Unified entity drawing
             if e_type == 'player_spawn' and data:
@@ -965,8 +1033,21 @@ class LevelEditor:
                             label = font.render(f"{item[:1]} {chance}%", True, (255,255,255))
                             lx, ly = sx + 2, sy + 2
                             surface.blit(label, (lx, ly))
-                    else:
                         self._draw_entity_marker(surface, gx, gy, (255, 128, 0), f"{ct[:1]}C")
+            elif e_type == 'portals':
+                for key, p_data in data.items():
+                    gx, gy = map(int, key.split(','))
+                    pid = p_data.get('id', 0)
+                    self._draw_entity_marker(surface, gx, gy, (200, 0, 255), f"W({pid})")
+            elif e_type == 'labels':
+                for key, l_data in data.items():
+                    gx, gy = map(int, key.split(','))
+                    text = l_data.get('text', "")
+                    sx, sy = self.camera.world_to_screen(gx * TILE_SIZE, gy * TILE_SIZE)
+                    if self.camera.zoom > 0.3:
+                        lab = font_large.render(text, True, (255, 255, 100))
+                        surface.blit(lab, (sx, sy))
+                        pygame.draw.rect(surface, (255, 255, 255), (sx-2, sy-2, lab.get_width()+4, lab.get_height()+4), 1)
 
         # Draw Hover Highlight
         mouse_pos = pygame.mouse.get_pos()

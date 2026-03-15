@@ -134,7 +134,7 @@ class PlayerAnimationBank:
         self._load_sheet("ATTACK 3.png", "attack_3", False, 14)
         self._load_sheet("DEFEND.png", "defend", True, 10)
         self._load_sheet("DEATH.png", "death", False, 10)
-        print(f"✓ Loaded {len(self.animations)} player animations (96x84)")
+        print(f"+ Loaded {len(self.animations)} player animations (96x84)")
     
     def get_animation(self, anim_name):
         """Get animation data by name"""
@@ -391,6 +391,10 @@ class GameMap:
             ex, ey = map(int, pos_key.split(","))
             self.enemies.append(Enemy(ex, ey, config.get("hp", 100), tb))
 
+        # Load Portals & Labels
+        self.portals = entities.get("portals", {})
+        self.labels = entities.get("labels", {})
+
     def is_solid(self, col, row):
         return f"{col},{row}" in self.collision_data
 
@@ -425,6 +429,60 @@ class GameMap:
                             img = pygame.transform.scale(tile_img, (tw, th))
                             surf.blit(img, (x, y))
                 except: continue
+
+        # Draw Labels
+        for pos_key, l_data in self.labels.items():
+            gx, gy = map(int, pos_key.split(","))
+            text = l_data.get("text", "")
+            sx = round((gx * TILE_SIZE - camera_x) * zoom)
+            sy = round((gy * TILE_SIZE - camera_y) * zoom)
+            lab = font.render(text, True, (255, 255, 100))
+            # Draw semi-transparent box
+            bg_rect = pygame.Rect(sx-5, sy-5, lab.get_width()+10, lab.get_height()+10)
+            overlay = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+            overlay.fill((0, 0, 0, 150))
+            surf.blit(overlay, (sx-5, sy-5))
+            surf.blit(lab, (sx, sy))
+
+        # Draw Portals
+        for pos_key, p_data in self.portals.items():
+            gx, gy = map(int, pos_key.split(","))
+            pid = p_data.get("id", 0)
+            sx = round((gx * TILE_SIZE - camera_x) * zoom)
+            sy = round((gy * TILE_SIZE - camera_y) * zoom)
+            sz = round(TILE_SIZE * zoom)
+            # Draw portal effect (pulse circle)
+            pulse = (math.sin(pygame.time.get_ticks() / 200) + 1) / 2
+            p_color = (200, 100, 255)
+            r = int((sz/2) * (0.6 + 0.4 * pulse))
+            pygame.draw.circle(surf, p_color, (sx + sz//2, sy + sz//2), r, 2)
+            pygame.draw.circle(surf, p_color, (sx + sz//2, sy + sz//2), int(r*0.6))
+
+# ─────────────────────────── PARTICLES ───────────────────────────
+
+class Particle:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.vx = random.uniform(-2, 2)
+        self.vy = random.uniform(-4, -1)
+        self.color = color
+        self.lifetime = random.uniform(0.5, 1.2)
+        self.size = random.randint(2, 4)
+
+    def update(self, dt):
+        self.vy += GRAVITY * 0.5 # Subtle gravity for particles
+        self.x += self.vx
+        self.y += self.vy
+        self.lifetime -= dt
+        return self.lifetime > 0
+
+    def draw(self, surf, cam_x, cam_y, zoom):
+        sx = round((self.x - cam_x) * zoom)
+        sy = round((self.y - cam_y) * zoom)
+        sz = max(1, round(self.size * zoom))
+        if -sz < sx < SCREEN_W and -sz < sy < SCREEN_H:
+            pygame.draw.circle(surf, self.color, (sx, sy), sz)
 
 # ─────────────────────────── ENEMY ───────────────────────────────
 
@@ -564,8 +622,15 @@ class Player:
         self.jump_cd = 0
         self.fall_start_y = self.rect.y
         self.stun_timer = 0
-        self.direction = 1  # 1=right, -1=left (สไปรต์หันขวาในไฟล์)
+        self.direction = 1  # 1=right, -1=left
         self.pab = pab
+        self.hp = 100
+        self.dead = False
+        self.hit_flash_timer = 0.0
+        self.death_anim_finished = False
+        self.defending = False
+        self.warp_timer = 0.0
+        self.near_portal_pos = None
 
         # Animation state
         self.current_anim = "idle"
@@ -768,6 +833,14 @@ class Player:
 
         surf.blit(scaled_frame, (sx + offset_x, sy + offset_y))
 
+        # Draw Warp Progress Circle
+        if self.warp_timer > 0:
+            p_cx, p_cy = sx + round(self.rect.width * zoom // 2), sy + round(self.rect.height * zoom // 2)
+            c_radius = round(12 * zoom)
+            angle = (self.warp_timer / 2.0) * 360
+            rect = pygame.Rect(p_cx - c_radius, p_cy - c_radius, c_radius * 2, c_radius * 2)
+            pygame.draw.arc(surf, (100, 255, 100), rect, math.radians(-90), math.radians(-90 + angle), 3)
+
 # ─────────────────────────── MAIN GAME ───────────────────────────
 
 def main():
@@ -812,6 +885,7 @@ def main():
     collected_chests = {} # Track collected chests to avoid duplicate scoring
     display_cumulative_score = 0  # Animated score display
     in_shop = False  # Shop screen state
+    particles = []
     
     running = True
     while running:
@@ -896,7 +970,47 @@ def main():
                     active_chest.reset()
                 active_chest.hold_timer = 0
 
-            can_move = not ((active_chest and active_chest.state == "opening") or interacting_with_exit)
+            # Warp Logic
+            active_portal = None
+            for p_pos, p_data in gmap.portals.items():
+                gx, gy = map(int, p_pos.split(','))
+                dist = math.hypot(player.rect.centerx - (gx * TILE_SIZE + 32), player.rect.centery - (gy * TILE_SIZE + 32))
+                if dist < 64:
+                    active_portal = (p_pos, p_data)
+                    break
+            
+            interacting_with_portal = False
+            if active_portal:
+                if keys[pygame.K_e] and not interacting_with_chest and not interacting_with_exit:
+                    player.warp_timer += dt
+                    interacting_with_portal = True
+                    if player.warp_timer >= 2.0:
+                        # Find destination
+                        dest_id = active_portal[1].get('id')
+                        dest_pos = None
+                        for other_pos, other_data in gmap.portals.items():
+                            if other_pos != active_portal[0] and other_data.get('id') == dest_id:
+                                dest_pos = other_pos
+                                break
+                        if dest_pos:
+                            dgx, dgy = map(int, dest_pos.split(','))
+                            player.rect.x = dgx * TILE_SIZE
+                            player.rect.y = dgy * TILE_SIZE
+                            player.warp_timer = 0.0
+                            # Snap camera immediately after warp
+                            camera_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
+                            camera_y = player.rect.centery - (SCREEN_H / 2) / ZOOM
+                else:
+                    player.warp_timer = 0.0
+                
+                # Show warp prompt
+                if player.warp_timer == 0:
+                    w_msg = font_sm.render("Hold [E] to Warp", True, (255, 255, 255))
+                    screen.blit(w_msg, (SCREEN_W//2 - w_msg.get_width()//2, SCREEN_H//2 - 100))
+            else:
+                player.warp_timer = 0.0
+
+            can_move = not ((active_chest and active_chest.state == "opening") or interacting_with_exit or interacting_with_portal)
             player.update(gmap, can_move, dt)
 
             # ตายเมื่อตกออกจากแผนที่
@@ -940,9 +1054,20 @@ def main():
                         enemy.hit_cooldown = 1.0
 
             
+            # Update Particles
+            particles = [p for p in particles if p.update(dt)]
+            
             # Update Enemies
             for enemy in gmap.enemies:
                 enemy.update(dt, gmap, player)
+            
+            # Enemy death effect trigger
+            for enemy in gmap.enemies:
+                if enemy.defeated and not getattr(enemy, 'blood_spawned', False):
+                    # Spawn 15-20 particles
+                    for _ in range(random.randint(15, 20)):
+                        particles.append(Particle(enemy.rect.centerx, enemy.rect.centery, (200, 0, 0)))
+                    enemy.blood_spawned = True
             
             # Camera Smoothing (Lerp) in World Space
             target_cam_x = player.rect.centerx - (SCREEN_W / 2) / ZOOM
@@ -958,6 +1083,10 @@ def main():
         # Drawing
         screen.fill((20, 20, 25))
         gmap.draw(screen, camera_x, camera_y, ZOOM, font_sm)
+        
+        # Draw Particles
+        for p in particles:
+            p.draw(screen, camera_x, camera_y, ZOOM)
         
         # Animate displayed score (follow cumulative_score)
         if display_cumulative_score < cumulative_score:
